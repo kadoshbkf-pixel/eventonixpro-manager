@@ -1,1 +1,0 @@
-# eventonixpro-manager
