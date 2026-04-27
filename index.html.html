@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>EventPro Manager — Sistema de Gestão de Eventos</title>
+<meta name="description" content="Sistema completo de gestão de eventos, propostas, clientes e financeiro para buffets e cerimonialistas."/>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Outfit',sans-serif;background:#070d1a;color:#e8edf7;min-height:100vh}
+input,select,textarea,button{font-family:'Outfit',sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#0d1628}
+::-webkit-scrollbar-thumb{background:#1e2d4a;border-radius:4px}
+input[type=range]{accent-color:#2563eb;width:100%}
+@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.fade-in{animation:fadeIn .4s ease both}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef}=React;
+
+// ── THEME ────────────────────────────────────────────────────────────────────
+const T={
+  bg:"#070d1a",surface:"#0d1628",card:"#111c35",cardHover:"#162040",
+  border:"#1e2d4a",accent:"#2563eb",gold:"#f59e0b",green:"#10b981",
+  red:"#ef4444",yellow:"#f59e0b",purple:"#8b5cf6",cyan:"#06b6d4",
+  textPrimary:"#e8edf7",textSecondary:"#7a90b8",textMuted:"#3d5278",
+};
+
+const MASTER={username:"admin",password:"onix2026",role:"master",name:"Átila",company:"Onix Eventos Produções"};
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+const currency=v=>`R$ ${Number(v||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}`;
+const fmtDate=d=>d?new Date(d+"T00:00").toLocaleDateString("pt-BR"):"—";
+const daysUntil=d=>Math.ceil((new Date(d)-new Date())/86400000);
+const genId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const cleanPhone=p=>(p||"").replace(/\D/g,"");
+
+// WhatsApp sender — both modes
+const sendWA=(phone,msg,mode="web")=>{
+  const enc=encodeURIComponent(msg);
+  const num=cleanPhone(phone);
+  if(mode==="api"&&num){
+    window.open(`https://wa.me/55${num}?text=${enc}`,"_blank");
+  } else {
+    window.open(`https://web.whatsapp.com/send?text=${enc}`,"_blank");
+  }
+};
+
+const scMap={
+  "Ativo":T.green,"ativo":T.green,"Fechado":T.green,"Aprovada":T.green,"Pago":T.green,"Finalizado":T.green,
+  "Expirado":T.red,"Bloqueado":T.red,"Cancelado":T.red,"Atrasado":T.red,"Perdido":T.red,
+  "Pendente":T.yellow,"Aguardando":T.yellow,"Em planejamento":T.accent,
+  "Em orçamento":T.textSecondary,"Proposta enviada":T.cyan,
+  "Negociação":T.purple,"Novo lead":T.textSecondary,"Parcial":T.gold,
+};
+const sc=s=>scMap[s]||T.textSecondary;
+
+// ── UI COMPONENTS ─────────────────────────────────────────────────────────────
+const Badge=({s})=>(
+  <span style={{background:sc(s)+"22",color:sc(s),borderRadius:20,padding:"3px 12px",
+    fontSize:11,fontWeight:700,border:`1px solid ${sc(s)}44`,whiteSpace:"nowrap"}}>{s}</span>
+);
+
+const iStyle={
+  background:T.surface,border:`1.5px solid ${T.border}`,borderRadius:10,
+  padding:"10px 14px",fontSize:14,color:T.textPrimary,outline:"none",
+  width:"100%",boxSizing:"border-box",
+};
+
+const Btn=({children,onClick,variant="primary",size="md",disabled,style:ex={}})=>{
+  const bg={primary:T.accent,danger:T.red,success:T.green,ghost:"transparent",wa:"#25D366",dark:T.surface}[variant]||T.accent;
+  const clr=variant==="ghost"?T.textSecondary:"#fff";
+  const bdr=variant==="ghost"?`1px solid ${T.border}`:"none";
+  return(
+    <button onClick={onClick} disabled={disabled} style={{
+      background:bg,color:clr,border:bdr,borderRadius:10,
+      padding:size==="sm"?"5px 12px":"10px 20px",cursor:disabled?"not-allowed":"pointer",
+      fontWeight:700,fontSize:size==="sm"?12:14,display:"inline-flex",alignItems:"center",
+      gap:6,opacity:disabled?.5:1,transition:"opacity .15s",...ex
+    }}
+    onMouseEnter={e=>{if(!disabled)e.currentTarget.style.opacity=".82"}}
+    onMouseLeave={e=>{if(!disabled)e.currentTarget.style.opacity="1"}}
+    >{children}</button>
+  );
+};
+
+const Field=({label,value,onChange,type="text",options,placeholder,rows,required,full,note,accent})=>(
+  <div style={{display:"flex",flexDirection:"column",gap:5,gridColumn:full?"1/-1":undefined}}>
+    {label&&<label style={{fontSize:12,fontWeight:700,color:T.textSecondary,textTransform:"uppercase",letterSpacing:.4}}>
+      {label}{required&&<span style={{color:T.red}}> *</span>}
+    </label>}
+    {options?(
+      <select value={value} onChange={e=>onChange(e.target.value)} style={{...iStyle,borderColor:accent?T.accent:T.border}}>
+        {options.map(o=><option key={o.v??o} value={o.v??o}>{o.l??o}</option>)}
+      </select>
+    ):rows?(
+      <textarea value={value} onChange={e=>onChange(e.target.value)} rows={rows} placeholder={placeholder}
+        style={{...iStyle,resize:"vertical",borderColor:accent?T.accent:T.border}}/>
+    ):(
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+        style={{...iStyle,borderColor:accent?T.accent:T.border}}/>
+    )}
+    {note&&<span style={{fontSize:11,color:T.textMuted}}>{note}</span>}
+  </div>
+);
+
+const Modal=({title,onClose,children,width=640})=>(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",
+    alignItems:"center",justifyContent:"center",zIndex:700,padding:20}}
+    onClick={e=>{if(e.target===e.currentTarget)onClose()}}>
+    <div className="fade-in" style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,
+      width:"100%",maxWidth:width,maxHeight:"92vh",overflow:"auto",
+      boxShadow:"0 32px 100px rgba(0,0,0,.7)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+        padding:"18px 26px",borderBottom:`1px solid ${T.border}`,position:"sticky",top:0,background:T.card,zIndex:1}}>
+        <h2 style={{margin:0,fontSize:17,fontWeight:800,color:T.textPrimary}}>{title}</h2>
+        <button onClick={onClose} style={{background:"none",border:"none",color:T.textSecondary,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+      </div>
+      <div style={{padding:"22px 26px"}}>{children}</div>
+    </div>
+  </div>
+);
+
+const Toast=({msg,type})=>(
+  <div className="fade-in" style={{position:"fixed",bottom:24,right:24,zIndex:999,
+    background:type==="error"?T.red:type==="warn"?T.yellow:T.green,
+    color:"#fff",borderRadius:14,padding:"13px 22px",fontWeight:700,fontSize:14,
+    boxShadow:"0 6px 32px rgba(0,0,0,.35)",display:"flex",alignItems:"center",gap:10}}>
+    {type==="error"?"❌":type==="warn"?"⚠️":"✅"} {msg}
+  </div>
+);
+
+// ── STORAGE ───────────────────────────────────────────────────────────────────
+const storage={
+  get:async k=>{try{const v=localStorage.getItem(k);return v?{value:v}:null}catch{return null}},
+  set:async(k,v)=>{try{localStorage.setItem(k,v);return{value:v}}catch{return null}},
+  delete:async k=>{try{localStorage.removeItem(k);return{deleted:true}}catch{return null}},
+};
+
+const defaultData=()=>({clients:[],events:[],proposals:[],financeiro:{receberList:[],pagarList:[]},waConfig:{apiKey:"",mode:"web"}});
+
+// ── WHATSAPP MODAL ────────────────────────────────────────────────────────────
+function WAModal({proposal,client,onClose,waConfig}){
+  const phone=client?.phone||"";
+  const[msg,setMsg]=useState(
+    `Olá, ${proposal.client}! 🎉\n\n` +
+    `Conforme conversamos, segue a proposta personalizada para o seu evento:\n\n` +
+    `📅 *Data:* ${fmtDate(proposal.date)}\n` +
+    `👥 *Convidados:* ${proposal.guests}\n` +
+    `💰 *Investimento:* ${currency(proposal.value)}\n` +
+    `⏳ *Válida até:* ${fmtDate(proposal.validity)}\n\n` +
+    (proposal.text?`📋 *Detalhes:*\n${proposal.text}\n\n`:"") +
+    `Preparamos tudo com muito carinho para tornar esse momento inesquecível! ✨\n\n` +
+    `Qualquer dúvida, estou à disposição. 😊`
+  );
+  const[mode,setMode]=useState(waConfig?.mode||"web");
+  const[phoneInput,setPhoneInput]=useState(phone);
+
+  const send=()=>{
+    sendWA(phoneInput,msg,mode);
+    onClose();
+  };
+
+  return(
+    <Modal title="📤 Enviar Proposta pelo WhatsApp" onClose={onClose} width={680}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:18}}>
+        <Field label="Número do Cliente (WhatsApp)" value={phoneInput} onChange={setPhoneInput}
+          placeholder="(11) 99999-0000" note="Com DDD, sem +55"/>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <label style={{fontSize:12,fontWeight:700,color:T.textSecondary,textTransform:"uppercase"}}>Modo de Envio</label>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setMode("web")} style={{flex:1,padding:"10px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:13,
+              background:mode==="web"?"#25D36622":"transparent",color:mode==="web"?"#25D366":T.textSecondary,
+              border:`1.5px solid ${mode==="web"?"#25D366":T.border}`}}>
+              🌐 WhatsApp Web
+            </button>
+            <button onClick={()=>setMode("api")} style={{flex:1,padding:"10px",borderRadius:10,cursor:"pointer",fontWeight:700,fontSize:13,
+              background:mode==="api"?T.accent+"22":"transparent",color:mode==="api"?T.accent:T.textSecondary,
+              border:`1.5px solid ${mode==="api"?T.accent:T.border}`}}>
+              ⚡ API Direta
+            </button>
+          </div>
+          <span style={{fontSize:11,color:T.textMuted}}>
+            {mode==="web"?"Abre o WhatsApp Web com a mensagem pronta":"Abre direto no WhatsApp do cliente via link wa.me"}
+          </span>
+        </div>
+      </div>
+
+      <div style={{marginBottom:16}}>
+        <label style={{fontSize:12,fontWeight:700,color:T.textSecondary,textTransform:"uppercase",display:"block",marginBottom:6}}>
+          ✏️ Mensagem (editável)
+        </label>
+        <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows={12}
+          style={{...iStyle,resize:"vertical",lineHeight:1.7,borderColor:"#25D366"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+          <span style={{fontSize:11,color:T.textMuted}}>{msg.length} caracteres</span>
+          <button onClick={()=>setMsg(
+            `Olá, ${proposal.client}! 🎉\n\n` +
+            `Conforme conversamos, segue a proposta personalizada para o seu evento:\n\n` +
+            `📅 *Data:* ${fmtDate(proposal.date)}\n` +
+            `👥 *Convidados:* ${proposal.guests}\n` +
+            `💰 *Investimento:* ${currency(proposal.value)}\n\n` +
+            `Preparamos tudo com muito carinho! ✨\n\nQualquer dúvida, estou à disposição. 😊`
+          )} style={{fontSize:11,color:T.accent,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>
+            🔄 Resetar mensagem
+          </button>
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div style={{background:"#0a1a0a",border:"1px solid #25D36644",borderRadius:14,padding:"16px 18px",marginBottom:18}}>
+        <div style={{fontSize:11,color:"#25D366",fontWeight:700,marginBottom:10,textTransform:"uppercase"}}>👁️ Pré-visualização</div>
+        <div style={{fontSize:13,color:"#d1fae5",lineHeight:1.8,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{msg}</div>
+      </div>
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+        <Btn variant="wa" onClick={send} style={{padding:"11px 24px",fontSize:15}}>
+          💬 Enviar pelo WhatsApp
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function LoginScreen({onLogin}){
+  const[u,setU]=useState("");
+  const[p,setP]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[show,setShow]=useState(false);
+
+  const login=async()=>{
+    setErr("");setLoading(true);
+    await new Promise(r=>setTimeout(r,600));
+    if(u===MASTER.username&&p===MASTER.password){onLogin({...MASTER});setLoading(false);return;}
+    const raw=await storage.get("ep_users");
+    const users=raw?JSON.parse(raw.value):[];
+    const user=users.find(x=>x.username===u&&x.password===p);
+    if(!user){setErr("Usuário ou senha incorretos.");setLoading(false);return;}
+    if(user.status==="Bloqueado"){setErr("Conta bloqueada. Fale com o suporte.");setLoading(false);return;}
+    if(user.expiry&&new Date(user.expiry)<new Date()){setErr("Licença expirada. Fale com o suporte.");setLoading(false);return;}
+    onLogin(user);setLoading(false);
+  };
+
+  const onKey=e=>{if(e.key==="Enter"&&u&&p)login();};
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse 90% 60% at 50% -10%,rgba(37,99,235,.18) 0%,transparent 70%)",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",top:"30%",left:"5%",width:500,height:500,borderRadius:"50%",background:"rgba(37,99,235,.04)",filter:"blur(100px)",pointerEvents:"none"}}/>
+
+      <div className="fade-in" style={{width:"100%",maxWidth:440,position:"relative",padding:"0 20px"}}>
+        <div style={{textAlign:"center",marginBottom:36}}>
+          <div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(37,99,235,.4))"}}>🎊</div>
+          <h1 style={{fontSize:36,fontWeight:900,color:T.textPrimary,margin:"0 0 8px",letterSpacing:"-1px"}}>EventPro</h1>
+          <p style={{color:T.textSecondary,margin:0,fontSize:14,fontWeight:600}}>Sistema de Gestão de Eventos</p>
+        </div>
+
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:24,padding:"36px 38px",
+          boxShadow:"0 32px 100px rgba(0,0,0,.5)"}}>
+          <h2 style={{margin:"0 0 24px",fontSize:19,fontWeight:800}}>Acessar o sistema</h2>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <Field label="Usuário" value={u} onChange={setU} placeholder="seu usuário"/>
+            <div style={{position:"relative"}}>
+              <Field label="Senha" value={p} onChange={v=>setP(v)} type={show?"text":"password"} placeholder="sua senha"/>
+              <button onKeyDown={onKey} onClick={()=>setShow(!show)} style={{position:"absolute",right:12,bottom:10,background:"none",border:"none",color:T.textMuted,cursor:"pointer",fontSize:16}}>{show?"🙈":"👁️"}</button>
+            </div>
+          </div>
+          {err&&<div style={{background:T.red+"18",border:`1px solid ${T.red}44`,borderRadius:10,padding:"10px 14px",color:T.red,fontSize:13,fontWeight:600,marginTop:14}}>⚠️ {err}</div>}
+          <Btn onClick={login} disabled={loading||!u||!p} style={{width:"100%",justifyContent:"center",marginTop:22,padding:"14px",fontSize:15}}>
+            {loading?"⏳ Verificando...":"🔐 Entrar"}
+          </Btn>
+          <p style={{textAlign:"center",color:T.textMuted,fontSize:12,marginTop:20}}>Não tem acesso? Fale com o administrador.</p>
+        </div>
+
+        <div style={{marginTop:20,background:T.surface,borderRadius:14,padding:"14px 18px",border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:11,color:T.textMuted,fontWeight:700,textTransform:"uppercase",marginBottom:8}}>🔑 Acesso Master</div>
+          <div style={{fontSize:13,color:T.textSecondary}}>Usuário: <strong style={{color:T.textPrimary}}>admin</strong> · Senha: <strong style={{color:T.textPrimary}}>onix2026</strong></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ADMIN PANEL ───────────────────────────────────────────────────────────────
+function AdminPanel({onLogout}){
+  const[view,setView]=useState("admin");
+  const[users,setUsers]=useState([]);
+  const[modal,setModal]=useState(null);
+  const[editId,setEditId]=useState(null);
+  const[toast,setToast]=useState(null);
+  const[search,setSearch]=useState("");
+  const emptyF={name:"",username:"",password:"",email:"",phone:"",company:"",plan:"Mensal",expiry:"",status:"Ativo",notes:""};
+  const[form,setForm]=useState(emptyF);
+
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000)};
+  useEffect(()=>{loadUsers();},[]);
+  const loadUsers=async()=>{const r=await storage.get("ep_users");setUsers(r?JSON.parse(r.value):[]);};
+  const saveUsers=async list=>{await storage.set("ep_users",JSON.stringify(list));setUsers(list);};
+
+  if(view==="meuevento")return<MainSystem user={{id:"master_owner",name:"Átila",company:"Onix Eventos Produções",plan:"Master",role:"master"}} onLogout={()=>setView("admin")} isMaster/>;
+
+  const openNew=()=>{
+    const exp=new Date();exp.setMonth(exp.getMonth()+1);
+    setForm({...emptyF,expiry:exp.toISOString().split("T")[0]});
+    setEditId(null);setModal("form");
+  };
+  const openEdit=u=>{setForm({...u});setEditId(u.id);setModal("form");};
+  const save=async()=>{
+    if(!form.username||!form.password||!form.name){showToast("Preencha nome, usuário e senha.","error");return;}
+    if(users.find(u=>u.username===form.username&&u.id!==editId)){showToast("Usuário já existe.","error");return;}
+    let list=editId?users.map(u=>u.id===editId?{...form,id:editId}:u):[...users,{...form,id:genId(),createdAt:new Date().toISOString().split("T")[0]}];
+    await saveUsers(list);showToast(editId?"Atualizado!":"Cliente criado!");setModal(null);
+  };
+  const del=async id=>{await saveUsers(users.filter(u=>u.id!==id));await storage.delete(`ep_data_${id}`);showToast("Removido.","warn");};
+  const toggle=async u=>{const ns=u.status==="Ativo"?"Bloqueado":"Ativo";await saveUsers(users.map(x=>x.id===u.id?{...x,status:ns}:x));showToast(ns==="Ativo"?"Acesso liberado!":"Acesso bloqueado.","warn");};
+  const renew=async(u,m)=>{const b=u.expiry&&new Date(u.expiry)>new Date()?new Date(u.expiry):new Date();b.setMonth(b.getMonth()+m);await saveUsers(users.map(x=>x.id===u.id?{...x,expiry:b.toISOString().split("T")[0],status:"Ativo"}:x));showToast(`Renovado por ${m} mês(es)!`);};
+  const ls=u=>{if(u.status==="Bloqueado")return"Bloqueado";if(u.expiry&&new Date(u.expiry)<new Date())return"Expirado";return"Ativo";};
+
+  const copyAccess=u=>{
+    const txt=`🎊 *EventPro Manager — Seus dados de acesso*\n\n👤 Usuário: ${u.username}\n🔑 Senha: ${u.password}\n📅 Validade: ${u.expiry?fmtDate(u.expiry):"Vitalício"}\n📦 Plano: ${u.plan}\n\n🔗 Acesso: Abra o sistema EventPro e faça login com os dados acima.\n\nBem-vindo(a) ao sistema! Qualquer dúvida, estamos à disposição. 😊`;
+    navigator.clipboard.writeText(txt).then(()=>showToast("Dados copiados para área de transferência!")).catch(()=>showToast("Erro ao copiar.","error"));
+  };
+
+  const sendAccessWA=u=>{
+    const msg=`Olá, ${u.name}! 🎊\n\nSeus dados de acesso ao *EventPro Manager* estão prontos:\n\n👤 *Usuário:* ${u.username}\n🔑 *Senha:* ${u.password}\n📅 *Validade:* ${u.expiry?fmtDate(u.expiry):"Vitalício"}\n📦 *Plano:* ${u.plan}\n\nBem-vindo(a)! Qualquer dúvida estou à disposição. 😊`;
+    sendWA(u.phone,msg,"api");
+  };
+
+  const filtered=users.filter(u=>u.name.toLowerCase().includes(search.toLowerCase())||u.username.toLowerCase().includes(search.toLowerCase()));
+  const stats={total:users.length,ativos:users.filter(u=>u.status==="Ativo"&&(!u.expiry||new Date(u.expiry)>new Date())).length,exp:users.filter(u=>u.expiry&&new Date(u.expiry)<new Date()).length,bloq:users.filter(u=>u.status==="Bloqueado").length};
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 28px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:50}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <span style={{fontSize:24}}>🎊</span>
+          <div>
+            <div style={{fontWeight:900,fontSize:17}}>EventPro — Painel Master</div>
+            <div style={{fontSize:11,color:T.textMuted}}>Controle de licenças e acessos</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{background:T.red+"22",color:T.red,borderRadius:8,padding:"4px 12px",fontSize:11,fontWeight:700}}>👑 MASTER</span>
+          <Btn onClick={()=>setView("meuevento")} style={{background:T.gold+"22",color:T.gold,border:`1px solid ${T.gold}44`}}>🎉 Minha Empresa</Btn>
+          <Btn variant="ghost" onClick={onLogout}>Sair</Btn>
+        </div>
+      </div>
+
+      <div style={{padding:"24px 28px"}}>
+        <div style={{display:"flex",gap:12,marginBottom:22,flexWrap:"wrap"}}>
+          {[{i:"👥",l:"Total",v:stats.total,c:T.accent},{i:"✅",l:"Ativos",v:stats.ativos,c:T.green},{i:"⏳",l:"Expirados",v:stats.exp,c:T.red},{i:"🚫",l:"Bloqueados",v:stats.bloq,c:T.yellow}].map(s=>(
+            <div key={s.l} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"16px 20px",flex:1,minWidth:120}}>
+              <div style={{fontSize:22,marginBottom:4}}>{s.i}</div>
+              <div style={{fontSize:24,fontWeight:900,color:s.c}}>{s.v}</div>
+              <div style={{fontSize:12,color:T.textSecondary,fontWeight:600}}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar cliente..." style={{...iStyle,width:260}}/>
+          <Btn onClick={openNew}>＋ Novo Cliente</Btn>
+        </div>
+
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1.2fr 1fr 1fr 1fr 220px",padding:"10px 16px",borderBottom:`1px solid ${T.border}`,fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:.4}}>
+            <span>Cliente</span><span>Usuário</span><span>Plano</span><span>Expira</span><span>Status</span><span>Ações</span>
+          </div>
+          {filtered.length===0&&<div style={{padding:"44px",textAlign:"center",color:T.textMuted}}>{users.length===0?"Nenhum cliente. Clique em + Novo Cliente.":"Nada encontrado."}</div>}
+          {filtered.map(u=>{
+            const lstat=ls(u);const d=u.expiry?daysUntil(u.expiry):null;
+            return(
+              <div key={u.id} style={{display:"grid",gridTemplateColumns:"2fr 1.2fr 1fr 1fr 1fr 220px",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,alignItems:"center",transition:"background .15s"}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.cardHover}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14}}>{u.name}</div>
+                  <div style={{fontSize:11,color:T.textMuted}}>{u.company||u.email||""}</div>
+                </div>
+                <div style={{fontSize:13,color:T.textSecondary,fontFamily:"monospace"}}>{u.username}</div>
+                <div><span style={{fontSize:11,background:T.accent+"22",color:T.accent,borderRadius:6,padding:"2px 8px",fontWeight:700}}>{u.plan}</span></div>
+                <div>
+                  <div style={{fontSize:12,color:d!==null&&d<=7?T.red:d!==null&&d<=30?T.yellow:T.textSecondary}}>{u.expiry?fmtDate(u.expiry):"Vitalício"}</div>
+                  {d!==null&&d>=0&&<div style={{fontSize:10,color:T.textMuted}}>{d}d</div>}
+                  {d!==null&&d<0&&<div style={{fontSize:10,color:T.red}}>Vencido</div>}
+                </div>
+                <div><Badge s={lstat}/></div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  <Btn size="sm" variant="ghost" onClick={()=>openEdit(u)} style={{padding:"4px 8px"}}>✏️</Btn>
+                  <Btn size="sm" onClick={()=>renew(u,1)} style={{background:T.green+"22",color:T.green,border:`1px solid ${T.green}44`,padding:"4px 8px",fontSize:11}}>+1m</Btn>
+                  <Btn size="sm" onClick={()=>renew(u,3)} style={{background:T.cyan+"22",color:T.cyan,border:`1px solid ${T.cyan}44`,padding:"4px 8px",fontSize:11}}>+3m</Btn>
+                  <Btn size="sm" onClick={()=>toggle(u)} style={{background:(u.status==="Ativo"?T.yellow:T.green)+"22",color:u.status==="Ativo"?T.yellow:T.green,border:`1px solid ${(u.status==="Ativo"?T.yellow:T.green)}44`,padding:"4px 8px",fontSize:11}}>{u.status==="Ativo"?"🔒":"🔓"}</Btn>
+                  <Btn size="sm" onClick={()=>copyAccess(u)} style={{background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`,padding:"4px 8px",fontSize:11}}>📋</Btn>
+                  {u.phone&&<Btn size="sm" variant="wa" onClick={()=>sendAccessWA(u)} style={{padding:"4px 8px",fontSize:11}}>💬</Btn>}
+                  <Btn size="sm" variant="danger" onClick={()=>del(u.id)} style={{padding:"4px 8px"}}>🗑️</Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {modal==="form"&&(
+        <Modal title={editId?"Editar Cliente":"Novo Cliente"} onClose={()=>setModal(null)} width={700}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <Field label="Nome completo" value={form.name} onChange={v=>setForm({...form,name:v})} required full/>
+            <Field label="Usuário de acesso" value={form.username} onChange={v=>setForm({...form,username:v.replace(/\s/g,"").toLowerCase()})} required placeholder="sem espaços" note="O cliente usa este nome para entrar"/>
+            <Field label="Senha" value={form.password} onChange={v=>setForm({...form,password:v})} required/>
+            <Field label="E-mail" value={form.email} onChange={v=>setForm({...form,email:v})} type="email"/>
+            <Field label="WhatsApp" value={form.phone} onChange={v=>setForm({...form,phone:v})} placeholder="(11) 99999-0000" note="Para envio automático dos dados"/>
+            <Field label="Empresa" value={form.company} onChange={v=>setForm({...form,company:v})}/>
+            <Field label="Plano" value={form.plan} onChange={v=>setForm({...form,plan:v})} options={["Mensal","Trimestral","Semestral","Anual","Vitalício"]}/>
+            <Field label="Expira em" value={form.expiry} onChange={v=>setForm({...form,expiry:v})} type="date" note="Vazio = acesso vitalício"/>
+            <Field label="Status" value={form.status} onChange={v=>setForm({...form,status:v})} options={["Ativo","Bloqueado"]}/>
+            <Field label="Observações internas" value={form.notes} onChange={v=>setForm({...form,notes:v})} rows={2} full/>
+          </div>
+          <div style={{background:T.surface,borderRadius:12,padding:"14px 18px",marginTop:16,border:`1px solid #25D36644`}}>
+            <div style={{fontSize:11,color:"#25D366",fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>🎫 Dados de acesso para enviar ao cliente</div>
+            <div style={{fontSize:13,color:T.textSecondary,lineHeight:2.2}}>
+              <strong style={{color:T.textPrimary}}>Usuário:</strong> {form.username||"—"} &nbsp;·&nbsp;
+              <strong style={{color:T.textPrimary}}>Senha:</strong> {form.password||"—"} &nbsp;·&nbsp;
+              <strong style={{color:T.textPrimary}}>Validade:</strong> {form.expiry?fmtDate(form.expiry):"Vitalício"} &nbsp;·&nbsp;
+              <strong style={{color:T.textPrimary}}>Plano:</strong> {form.plan}
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}>
+            <Btn variant="ghost" onClick={()=>setModal(null)}>Cancelar</Btn>
+            <Btn onClick={save}>💾 Salvar Cliente</Btn>
+          </div>
+        </Modal>
+      )}
+      {toast&&<Toast msg={toast.msg} type={toast.type}/>}
+    </div>
+  );
+}
+
+// ── MAIN SYSTEM ───────────────────────────────────────────────────────────────
+const ETYPES=["Casamento","15 anos","Aniversário","Formatura","Corporativo","Infantil","Chá Revelação","Outro"];
+const ESTAT=["Em orçamento","Proposta enviada","Fechado","Em planejamento","Em execução","Finalizado","Cancelado"];
+const CSTAT=["Novo lead","Em atendimento","Negociação","Fechado","Perdido"];
+
+function MainSystem({user,onLogout,isMaster}){
+  const[section,setSection]=useState("dashboard");
+  const[data,setData]=useState(null);
+  const[toast,setToast]=useState(null);
+  const key=`ep_data_${user.id}`;
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3200)};
+  useEffect(()=>{(async()=>{const r=await storage.get(key);setData(r?JSON.parse(r.value):defaultData());})();},[key]);
+  const update=useCallback(async(k,v)=>{setData(prev=>{const nd={...prev,[k]:v};storage.set(key,JSON.stringify(nd));return nd;});},[key]);
+  if(!data)return<div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{textAlign:"center",color:T.textSecondary}}><div style={{fontSize:44,marginBottom:12}}>⏳</div>Carregando...</div></div>;
+
+  const NAV=[{k:"dashboard",i:"📊",l:"Dashboard"},{k:"clientes",i:"👥",l:"Clientes"},{k:"eventos",i:"🎉",l:"Eventos"},{k:"propostas",i:"📄",l:"Propostas"},{k:"financeiro",i:"💰",l:"Financeiro"},{k:"orcamento",i:"🧮",l:"Orçamento"}];
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex"}}>
+      <aside style={{width:226,background:T.surface,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",padding:"20px 13px",position:"fixed",top:0,left:0,bottom:0,zIndex:100,overflowY:"auto"}}>
+        <div style={{marginBottom:26,padding:"0 7px"}}>
+          <div style={{fontSize:18,fontWeight:900,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:22}}>🎊</span>EventPro</div>
+          <div style={{fontSize:10,color:T.textMuted,marginTop:2,fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>Manager</div>
+        </div>
+        {NAV.map(n=>(
+          <button key={n.k} onClick={()=>setSection(n.k)} style={{
+            background:section===n.k?T.accent+"22":"transparent",color:section===n.k?T.accent:T.textSecondary,
+            border:`1px solid ${section===n.k?T.accent+"44":"transparent"}`,
+            borderRadius:11,padding:"10px 13px",cursor:"pointer",textAlign:"left",
+            fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:9,
+            marginBottom:3,transition:"all .18s",width:"100%"}}
+          onMouseEnter={e=>{if(section!==n.k)e.currentTarget.style.background=T.cardHover}}
+          onMouseLeave={e=>{if(section!==n.k)e.currentTarget.style.background="transparent"}}
+          ><span style={{fontSize:17}}>{n.i}</span>{n.l}</button>
+        ))}
+        <div style={{marginTop:"auto"}}>
+          {isMaster&&<div style={{background:T.gold+"18",border:`1px solid ${T.gold}44`,borderRadius:9,padding:"7px 11px",marginBottom:9,display:"flex",alignItems:"center",gap:6}}><span>👑</span><span style={{fontSize:11,color:T.gold,fontWeight:700}}>Modo Master</span></div>}
+          <div style={{background:T.card,borderRadius:11,border:`1px solid ${T.border}`,padding:"11px 13px"}}>
+            <div style={{fontSize:13,fontWeight:800}}>{user.company||user.name}</div>
+            <div style={{fontSize:11,color:T.textMuted,marginTop:2}}>{user.plan||"Plano ativo"}</div>
+            {isMaster?<button onClick={onLogout} style={{background:T.accent+"22",border:`1px solid ${T.accent}44`,color:T.accent,fontSize:11,cursor:"pointer",marginTop:8,padding:"5px 10px",borderRadius:7,fontWeight:700,width:"100%"}}>← Painel Admin</button>
+            :<button onClick={onLogout} style={{background:"none",border:"none",color:T.textMuted,fontSize:12,cursor:"pointer",marginTop:8,padding:0}}>🚪 Sair</button>}
+          </div>
+        </div>
+      </aside>
+      <main style={{marginLeft:226,flex:1,padding:"30px 34px",minHeight:"100vh",boxSizing:"border-box"}}>
+        {section==="dashboard"&&<Dashboard data={data} setSection={setSection}/>}
+        {section==="clientes"&&<Clientes clients={data.clients} setClients={v=>update("clients",v)}/>}
+        {section==="eventos"&&<Eventos events={data.events} setEvents={v=>update("events",v)} clients={data.clients}/>}
+        {section==="propostas"&&<Propostas proposals={data.proposals} setProposals={v=>update("proposals",v)} clients={data.clients} waConfig={data.waConfig||{mode:"web"}}/>}
+        {section==="financeiro"&&<Financeiro financeiro={data.financeiro} setFinanceiro={v=>update("financeiro",v)} events={data.events}/>}
+        {section==="orcamento"&&<Orcamento/>}
+      </main>
+      {toast&&<Toast msg={toast.msg} type={toast.type}/>}
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({data,setSection}){
+  const{clients,events,financeiro}=data;
+  const totalV=events.reduce((s,e)=>s+(Number(e.value)||0),0);
+  const totalR=events.reduce((s,e)=>s+(Number(e.received)||0),0);
+  const atrasados=financeiro.receberList.filter(r=>r.status==="Atrasado").length;
+  const proximos=[...events].sort((a,b)=>new Date(a.date)-new Date(b.date)).filter(e=>daysUntil(e.date)>=0).slice(0,5);
+  const alerts=[atrasados>0&&{type:"red",msg:`${atrasados} pagamento(s) em atraso!`}].filter(Boolean);
+  return(
+    <div>
+      <div style={{marginBottom:22}}><h1 style={{fontSize:25,fontWeight:900,margin:0}}>Dashboard</h1><p style={{color:T.textSecondary,margin:"3px 0 0",fontSize:13}}>Visão geral da sua empresa</p></div>
+      {alerts.map((a,i)=><div key={i} style={{background:T.red+"18",border:`1px solid ${T.red}44`,borderRadius:11,padding:"10px 16px",color:T.red,fontSize:13,fontWeight:600,marginBottom:12}}>🔴 {a.msg}</div>)}
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:20}}>
+        {[{i:"🎉",l:"Eventos",v:events.length,c:T.accent},{i:"👥",l:"Clientes",v:clients.length,c:T.cyan},{i:"💰",l:"Total Vendido",v:currency(totalV),c:T.green},{i:"✅",l:"Recebido",v:currency(totalR),c:T.green},{i:"⏳",l:"Pendente",v:currency(totalV-totalR),c:T.yellow}].map(s=>(
+          <div key={s.l} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"16px 18px",flex:1,minWidth:130}}>
+            <div style={{fontSize:22,marginBottom:5}}>{s.i}</div>
+            <div style={{fontSize:19,fontWeight:900,color:s.c}}>{s.v}</div>
+            <div style={{fontSize:12,color:T.textSecondary,fontWeight:600}}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px 20px"}}>
+          <h3 style={{margin:"0 0 12px",fontSize:14,fontWeight:800}}>📍 Próximos Eventos</h3>
+          {proximos.length===0&&<p style={{color:T.textMuted,fontSize:13}}>Nenhum evento agendado.</p>}
+          {proximos.map(ev=>{const d=daysUntil(ev.date);return(
+            <div key={ev.id} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+              <div><div style={{fontWeight:700,fontSize:13}}>{ev.name}</div><div style={{fontSize:11,color:T.textSecondary}}>{fmtDate(ev.date)} · {ev.local||"—"}</div></div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <span style={{fontSize:11,fontWeight:700,color:d<=7?T.red:d<=30?T.yellow:T.green}}>{d===0?"Hoje!":d<0?"Realizado":`${d}d`}</span>
+                <Badge s={ev.status}/>
+              </div>
+            </div>
+          );})}
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px 20px"}}>
+          <h3 style={{margin:"0 0 12px",fontSize:14,fontWeight:800}}>💳 Contas a Receber</h3>
+          {financeiro.receberList.length===0&&<p style={{color:T.textMuted,fontSize:13}}>Nenhum lançamento.</p>}
+          {financeiro.receberList.slice(0,5).map(r=>(
+            <div key={r.id} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+              <div><div style={{fontWeight:700,fontSize:13}}>{r.client}</div><div style={{fontSize:11,color:T.textSecondary}}>Venc. {fmtDate(r.venc)}</div></div>
+              <div style={{textAlign:"right"}}><div style={{fontWeight:800,color:sc(r.status),fontSize:13}}>{currency((r.total||0)-(r.paid||0))}</div><Badge s={r.status}/></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CLIENTES ──────────────────────────────────────────────────────────────────
+function Clientes({clients,setClients}){
+  const[modal,setModal]=useState(null);const[editId,setEditId]=useState(null);const[search,setSearch]=useState("");
+  const emptyF={name:"",phone:"",email:"",city:"",status:"Novo lead",source:"",obs:""};
+  const[form,setForm]=useState(emptyF);
+  const filtered=clients.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.city?.toLowerCase().includes(search.toLowerCase()));
+  const save=()=>{if(!form.name)return;if(editId)setClients(clients.map(c=>c.id===editId?{...form,id:editId}:c));else setClients([{...form,id:genId()},...clients]);setModal(null);};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <div><h1 style={{fontSize:24,fontWeight:900,margin:0}}>Clientes</h1><p style={{color:T.textSecondary,fontSize:12,margin:"2px 0 0"}}>{clients.length} cadastrados</p></div>
+        <Btn onClick={()=>{setForm(emptyF);setEditId(null);setModal("form");}}>＋ Novo Cliente</Btn>
+      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar..." style={{...iStyle,width:280,marginBottom:14}}/>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1.5fr 1fr 1fr 100px",padding:"10px 16px",borderBottom:`1px solid ${T.border}`,fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase"}}>
+          <span>Nome</span><span>Contato</span><span>Cidade</span><span>Status</span><span>Ações</span>
+        </div>
+        {filtered.length===0&&<div style={{padding:"34px",textAlign:"center",color:T.textMuted}}>Nenhum cliente cadastrado.</div>}
+        {filtered.map(c=>(
+          <div key={c.id} style={{display:"grid",gridTemplateColumns:"2fr 1.5fr 1fr 1fr 100px",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,alignItems:"center",transition:"background .15s"}}
+            onMouseEnter={e=>e.currentTarget.style.background=T.cardHover}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div><div style={{fontWeight:700,fontSize:13}}>{c.name}</div><div style={{fontSize:11,color:T.textMuted}}>{c.source?`via ${c.source}`:""}</div></div>
+            <div style={{fontSize:13,color:T.textSecondary}}>{c.phone||"—"}<br/><span style={{fontSize:11}}>{c.email||""}</span></div>
+            <div style={{fontSize:13,color:T.textSecondary}}>{c.city||"—"}</div>
+            <Badge s={c.status}/>
+            <div style={{display:"flex",gap:5}}>
+              {c.phone&&<a href={`https://wa.me/55${cleanPhone(c.phone)}`} target="_blank" rel="noreferrer" style={{background:"#25D36622",color:"#25D366",borderRadius:7,padding:"5px 8px",fontSize:12,textDecoration:"none",fontWeight:700}}>💬</a>}
+              <Btn size="sm" variant="ghost" onClick={()=>{setForm({...c});setEditId(c.id);setModal("form");}}>✏️</Btn>
+              <Btn size="sm" variant="danger" onClick={()=>setClients(clients.filter(x=>x.id!==c.id))}>🗑️</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+      {modal==="form"&&(
+        <Modal title={editId?"Editar Cliente":"Novo Cliente"} onClose={()=>setModal(null)}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <Field label="Nome completo" value={form.name} onChange={v=>setForm({...form,name:v})} required full/>
+            <Field label="WhatsApp" value={form.phone} onChange={v=>setForm({...form,phone:v})} placeholder="(11) 99999-0000"/>
+            <Field label="E-mail" value={form.email} onChange={v=>setForm({...form,email:v})} type="email"/>
+            <Field label="Cidade" value={form.city} onChange={v=>setForm({...form,city:v})}/>
+            <Field label="Status" value={form.status} onChange={v=>setForm({...form,status:v})} options={CSTAT}/>
+            <Field label="Como conheceu?" value={form.source} onChange={v=>setForm({...form,source:v})} placeholder="Instagram, Indicação..."/>
+            <Field label="Observações" value={form.obs} onChange={v=>setForm({...form,obs:v})} rows={3} full/>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}>
+            <Btn variant="ghost" onClick={()=>setModal(null)}>Cancelar</Btn>
+            <Btn onClick={save}>💾 Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── EVENTOS ───────────────────────────────────────────────────────────────────
+function Eventos({events,setEvents,clients}){
+  const[modal,setModal]=useState(null);const[editId,setEditId]=useState(null);const[sel,setSel]=useState(null);
+  const emptyF={name:"",type:"Casamento",client:"",date:"",time:"",local:"",guests:"",value:"",received:"0",status:"Em orçamento"};
+  const[form,setForm]=useState(emptyF);
+  const openEdit=ev=>{setForm({...ev,value:ev.value||"",received:ev.received||"0"});setEditId(ev.id);setModal("form");};
+  const save=()=>{if(!form.name)return;const ev={...form,id:editId||genId(),value:Number(form.value)||0,received:Number(form.received)||0,guests:Number(form.guests)||0};if(editId)setEvents(events.map(e=>e.id===editId?ev:e));else setEvents([ev,...events]);setModal(null);};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <div><h1 style={{fontSize:24,fontWeight:900,margin:0}}>Eventos</h1><p style={{color:T.textSecondary,fontSize:12,margin:"2px 0 0"}}>{events.length} cadastrados</p></div>
+        <Btn onClick={()=>{setForm(emptyF);setEditId(null);setModal("form");}}>＋ Novo Evento</Btn>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:13}}>
+        {events.length===0&&<div style={{color:T.textMuted,padding:20,gridColumn:"1/-1",textAlign:"center"}}>Nenhum evento. Clique em + Novo Evento.</div>}
+        {events.map(ev=>{
+          const pct=ev.value>0?Math.min(100,Math.round((ev.received/ev.value)*100)):0;
+          const d=daysUntil(ev.date);
+          return(
+            <div key={ev.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:15,padding:"17px 19px",cursor:"pointer",transition:"all .2s"}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.transform="none";}}
+              onClick={()=>{setSel(ev);setModal("detail");}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
+                <span style={{fontSize:11,background:T.accent+"22",color:T.accent,borderRadius:6,padding:"2px 9px",fontWeight:700}}>{ev.type}</span>
+                <Badge s={ev.status}/>
+              </div>
+              <h3 style={{margin:"0 0 3px",fontSize:15,fontWeight:800}}>{ev.name}</h3>
+              <p style={{margin:"0 0 10px",fontSize:12,color:T.textSecondary}}>👤 {ev.client||"—"}</p>
+              <div style={{fontSize:12,color:T.textSecondary,marginBottom:10}}>📅 {fmtDate(ev.date)} · 📍 {ev.local||"—"} · 👥 {ev.guests||0}</div>
+              <div style={{marginBottom:7}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.textMuted,marginBottom:3}}><span>Recebido: {currency(ev.received)}</span><span>{pct}%</span></div>
+                <div style={{background:T.border,borderRadius:4,height:4}}><div style={{width:`${pct}%`,background:pct>=100?T.green:pct>=50?T.accent:T.yellow,borderRadius:4,height:4}}/></div>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontWeight:900,color:T.green,fontSize:16}}>{currency(ev.value)}</span>
+                <span style={{fontSize:11,fontWeight:700,color:d<0?T.textMuted:d<=7?T.red:d<=30?T.yellow:T.textSecondary}}>{d<0?"Realizado":d===0?"Hoje!":`${d}d`}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {modal==="detail"&&sel&&(()=>{const ev=events.find(e=>e.id===sel.id)||sel;return(
+        <Modal title={ev.name} onClose={()=>setModal(null)} width={580}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            {[["📅 Data",fmtDate(ev.date)],["⏰ Hora",ev.time||"—"],["📍 Local",ev.local||"—"],["👥 Convidados",ev.guests||0],["💰 Total",currency(ev.value)],["✅ Recebido",currency(ev.received||0)],["⏳ Pendente",currency((ev.value||0)-(ev.received||0))],["🏷️ Tipo",ev.type]].map(([k,v])=>(
+              <div key={k} style={{background:T.surface,borderRadius:9,padding:"9px 13px"}}><div style={{fontSize:10,color:T.textMuted,fontWeight:700,textTransform:"uppercase"}}>{k}</div><div style={{fontSize:13,fontWeight:700,marginTop:3}}>{v}</div></div>
+            ))}
+          </div>
+          <Badge s={ev.status}/>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}>
+            <Btn variant="ghost" onClick={()=>setModal(null)}>Fechar</Btn>
+            <Btn variant="ghost" onClick={()=>{setModal(null);setTimeout(()=>openEdit(ev),50);}}>✏️ Editar</Btn>
+            <Btn variant="danger" onClick={()=>{setEvents(events.filter(e=>e.id!==ev.id));setModal(null);}}>🗑️</Btn>
+          </div>
+        </Modal>
+      );})()}
+      {modal==="form"&&(
+        <Modal title={editId?"Editar Evento":"Novo Evento"} onClose={()=>setModal(null)} width={660}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>
+            <Field label="Nome do Evento" value={form.name} onChange={v=>setForm({...form,name:v})} required full/>
+            <Field label="Tipo" value={form.type} onChange={v=>setForm({...form,type:v})} options={ETYPES}/>
+            <Field label="Cliente" value={form.client} onChange={v=>setForm({...form,client:v})} options={["—",...clients.map(c=>c.name)]}/>
+            <Field label="Data" value={form.date} onChange={v=>setForm({...form,date:v})} type="date"/>
+            <Field label="Horário" value={form.time} onChange={v=>setForm({...form,time:v})} type="time"/>
+            <Field label="Local" value={form.local} onChange={v=>setForm({...form,local:v})}/>
+            <Field label="Convidados" value={form.guests} onChange={v=>setForm({...form,guests:v})} type="number"/>
+            <Field label="Status" value={form.status} onChange={v=>setForm({...form,status:v})} options={ESTAT}/>
+            <Field label="Valor Total (R$)" value={form.value} onChange={v=>setForm({...form,value:v})} type="number"/>
+            <Field label="Valor Recebido (R$)" value={form.received} onChange={v=>setForm({...form,received:v})} type="number"/>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}><Btn variant="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={save}>💾 Salvar</Btn></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── PROPOSTAS COM WHATSAPP ────────────────────────────────────────────────────
+const TPLS={
+  "Casamento":"Prezado(a), preparamos com muito carinho esta proposta para o seu casamento.\n\nNosso serviço inclui:\n✅ Buffet completo\n✅ Coquetel de boas-vindas\n✅ Jantar servido\n✅ Sobremesas\n✅ Open bar\n✅ Equipe especializada\n\nGarantimos que cada detalhe será perfeito neste dia tão especial. ✨💍",
+  "15 anos":"Olá! Ficamos felizes em apresentar nossa proposta para a festa de 15 anos.\n\nIncluímos:\n🌸 Decoração temática personalizada\n🎂 Buffet completo com mesa de doces\n🎵 DJ e iluminação cênica\n👗 Recepcionistas uniformizadas\n📸 Cobertura do evento\n\nVamos tornar essa noite inesquecível! 🎉🌸",
+  "Corporativo":"Prezado(a), segue nossa proposta para o evento corporativo.\n\nOferecemos:\n☕ Coffee break completo\n🍽️ Refeição executiva\n🎤 Sistema de som e projeção\n👥 Recepcionistas\n📋 Organização completa\n\nExcelência e profissionalismo em cada detalhe. 🏢✅",
+};
+
+function Propostas({proposals,setProposals,clients,waConfig}){
+  const[modal,setModal]=useState(null);
+  const[editId,setEditId]=useState(null);
+  const[waProposal,setWaProposal]=useState(null);
+  const emptyF={client:"",type:"Casamento",date:"",guests:"",value:"",status:"Aguardando",validity:"",text:""};
+  const[form,setForm]=useState(emptyF);
+
+  const getClientPhone=name=>{const c=clients.find(x=>x.name===name);return c?.phone||"";};
+
+  const save=()=>{
+    if(!form.client)return;
+    const p={...form,id:editId||genId(),value:Number(form.value)||0,guests:Number(form.guests)||0,sent:new Date().toISOString().split("T")[0]};
+    if(editId)setProposals(proposals.map(x=>x.id===editId?p:x));else setProposals([p,...proposals]);
+    setModal(null);
+  };
+
+  const openWA=p=>{setWaProposal(p);setModal("wa");};
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <div><h1 style={{fontSize:24,fontWeight:900,margin:0}}>Propostas</h1><p style={{color:T.textSecondary,fontSize:12,margin:"2px 0 0"}}>{proposals.length} cadastradas</p></div>
+        <Btn onClick={()=>{setForm(emptyF);setEditId(null);setModal("form");}}>＋ Nova Proposta</Btn>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:13}}>
+        {proposals.length===0&&<div style={{color:T.textMuted,gridColumn:"1/-1",textAlign:"center",padding:20}}>Nenhuma proposta. Clique em + Nova Proposta.</div>}
+        {proposals.map(p=>(
+          <div key={p.id} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:15,padding:"19px 21px",transition:"border-color .2s"}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=T.accent}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=T.border}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:9}}>
+              <span style={{fontSize:11,color:T.textMuted,fontWeight:700,textTransform:"uppercase"}}>{p.type}</span>
+              <Badge s={p.status}/>
+            </div>
+            <h3 style={{margin:"0 0 3px",fontSize:16,fontWeight:800}}>{p.client}</h3>
+            <div style={{fontSize:12,color:T.textSecondary,marginBottom:10}}>📅 {fmtDate(p.date)} · 👥 {p.guests} convidados · ⏳ Válida: {fmtDate(p.validity)}</div>
+            {p.text&&<p style={{fontSize:12,color:T.textSecondary,background:T.surface,borderRadius:8,padding:"8px 11px",margin:"0 0 12px",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{p.text.slice(0,130)}{p.text.length>130?"...":""}</p>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <span style={{fontWeight:900,color:T.green,fontSize:18}}>{currency(p.value)}</span>
+              <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+                {/* WhatsApp Web */}
+                <button onClick={()=>openWA(p)} style={{background:"#25D36622",color:"#25D366",border:"1px solid #25D36644",borderRadius:9,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                  💬 Enviar WA
+                </button>
+                <Btn size="sm" variant="ghost" onClick={()=>{setForm({...p});setEditId(p.id);setModal("form");}}>✏️</Btn>
+                <Btn size="sm" variant="danger" onClick={()=>setProposals(proposals.filter(x=>x.id!==p.id))}>🗑️</Btn>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* WhatsApp Modal */}
+      {modal==="wa"&&waProposal&&(
+        <WAModal
+          proposal={waProposal}
+          client={clients.find(c=>c.name===waProposal.client)}
+          waConfig={waConfig}
+          onClose={()=>setModal(null)}
+        />
+      )}
+
+      {modal==="form"&&(
+        <Modal title={editId?"Editar Proposta":"Nova Proposta"} onClose={()=>setModal(null)} width={700}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>
+            <Field label="Cliente" value={form.client} onChange={v=>setForm({...form,client:v})} options={["—",...clients.map(c=>c.name)]} required/>
+            <Field label="Tipo" value={form.type} onChange={v=>setForm({...form,type:v})} options={ETYPES}/>
+            <Field label="Data do Evento" value={form.date} onChange={v=>setForm({...form,date:v})} type="date"/>
+            <Field label="Válida até" value={form.validity} onChange={v=>setForm({...form,validity:v})} type="date"/>
+            <Field label="Convidados" value={form.guests} onChange={v=>setForm({...form,guests:v})} type="number"/>
+            <Field label="Valor (R$)" value={form.value} onChange={v=>setForm({...form,value:v})} type="number"/>
+            <Field label="Status" value={form.status} onChange={v=>setForm({...form,status:v})} options={["Aguardando","Aprovada","Recusada"]} full/>
+          </div>
+          <div style={{marginTop:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <label style={{fontSize:12,fontWeight:700,color:T.textSecondary,textTransform:"uppercase"}}>Texto da Proposta</label>
+              <div style={{display:"flex",gap:6}}>
+                {["Casamento","15 anos","Corporativo"].map(t=>(
+                  <Btn key={t} size="sm" variant="ghost" onClick={()=>setForm({...form,type:t,text:TPLS[t]})}>📋 {t}</Btn>
+                ))}
+              </div>
+            </div>
+            <textarea value={form.text} onChange={e=>setForm({...form,text:e.target.value})} rows={6}
+              placeholder="Cole ou escreva o texto. Aceita emojis, listas e quebras de linha..." style={{...iStyle,resize:"vertical",lineHeight:1.7}}/>
+            <p style={{fontSize:11,color:T.textMuted,marginTop:5}}>💡 Use os modelos acima ou cole seu próprio texto do ChatGPT, Word ou qualquer lugar.</p>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}><Btn variant="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={save}>💾 Salvar</Btn></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── FINANCEIRO ────────────────────────────────────────────────────────────────
+function Financeiro({financeiro,setFinanceiro,events}){
+  const[tab,setTab]=useState("receber");const[modal,setModal]=useState(null);const[editId,setEditId]=useState(null);const[form,setForm]=useState({});
+  const list=tab==="receber"?financeiro.receberList:financeiro.pagarList;
+  const setList=fn=>setFinanceiro({...financeiro,[tab==="receber"?"receberList":"pagarList"]:typeof fn==="function"?fn(list):fn});
+  const tR=financeiro.receberList.reduce((s,r)=>s+((r.total||0)-(r.paid||0)),0);
+  const tP=financeiro.pagarList.filter(p=>p.status!=="Pago").reduce((s,p)=>s+(p.value||0),0);
+  const CATS=["Buffet","Bebidas","Decoração","DJ","Fotografia","Filmagem","Equipe","Estrutura","Transporte","Outros"];
+  const evNames=["—",...events.map(e=>e.name)];
+  const save=()=>{const it={...form,id:editId||genId(),value:Number(form.value||0),total:Number(form.total||0),paid:Number(form.paid||0)};if(editId)setList(prev=>prev.map(i=>i.id===editId?it:i));else setList(prev=>[it,...prev]);setModal(null);};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <h1 style={{fontSize:24,fontWeight:900,margin:0}}>Financeiro</h1>
+        <Btn onClick={()=>{setForm(tab==="receber"?{client:"",event:"",total:"",paid:"0",parcela:"1/1",venc:"",status:"Pendente"}:{supplier:"",category:"Buffet",value:"",venc:"",event:"",status:"Pendente"});setEditId(null);setModal("form");}}>＋ Novo Lançamento</Btn>
+      </div>
+      <div style={{display:"flex",gap:11,marginBottom:18,flexWrap:"wrap"}}>
+        {[{i:"💚",l:"A Receber",v:currency(tR),c:T.green},{i:"🔴",l:"A Pagar",v:currency(tP),c:T.red},{i:"📊",l:"Saldo Estimado",v:currency(tR-tP),c:tR-tP>=0?T.green:T.red}].map(s=>(
+          <div key={s.l} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:13,padding:"14px 18px",flex:1,minWidth:120}}>
+            <div style={{fontSize:21,marginBottom:4}}>{s.i}</div>
+            <div style={{fontSize:17,fontWeight:900,color:s.c}}>{s.v}</div>
+            <div style={{fontSize:12,color:T.textSecondary}}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:9,marginBottom:14}}>
+        {[["receber","💚 A Receber"],["pagar","🔴 A Pagar"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{background:tab===k?T.accent:"transparent",color:tab===k?"#fff":T.textSecondary,border:`1px solid ${tab===k?T.accent:T.border}`,borderRadius:9,padding:"7px 18px",cursor:"pointer",fontWeight:700,fontSize:13}}>{l}</button>
+        ))}
+      </div>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:13,overflow:"hidden"}}>
+        {list.length===0&&<div style={{padding:"34px",textAlign:"center",color:T.textMuted}}>Nenhum lançamento.</div>}
+        {list.map(item=>(
+          <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,gap:10,transition:"background .15s"}}
+            onMouseEnter={e=>e.currentTarget.style.background=T.cardHover}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:13}}>{tab==="receber"?item.client:item.supplier}</div>
+              <div style={{fontSize:11,color:T.textMuted}}>{item.event||""} · Venc. {fmtDate(item.venc)}{tab==="receber"?` · Parc. ${item.parcela||""}`:` · ${item.category||""}`}</div>
+            </div>
+            <div style={{fontWeight:800,fontSize:14,color:item.status==="Pago"?T.textMuted:tab==="receber"?T.green:T.red}}>{tab==="receber"?currency((item.total||0)-(item.paid||0)):currency(item.value||0)}</div>
+            <Badge s={item.status}/>
+            <div style={{display:"flex",gap:5}}>
+              {item.status!=="Pago"&&<Btn size="sm" onClick={()=>setList(prev=>prev.map(i=>i.id===item.id?{...i,status:"Pago",paid:i.total}:i))} style={{background:T.green+"22",color:T.green,border:`1px solid ${T.green}44`}}>✓ Pago</Btn>}
+              <Btn size="sm" variant="ghost" onClick={()=>{setForm({...item});setEditId(item.id);setModal("form");}}>✏️</Btn>
+              <Btn size="sm" variant="danger" onClick={()=>setList(prev=>prev.filter(i=>i.id!==item.id))}>🗑️</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+      {modal==="form"&&(
+        <Modal title="Novo Lançamento" onClose={()=>setModal(null)}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:13}}>
+            {tab==="receber"?<>
+              <Field label="Cliente" value={form.client||""} onChange={v=>setForm({...form,client:v})} required full/>
+              <Field label="Evento" value={form.event||""} onChange={v=>setForm({...form,event:v})} options={evNames}/>
+              <Field label="Valor Total" value={form.total||""} onChange={v=>setForm({...form,total:v})} type="number"/>
+              <Field label="Valor Pago" value={form.paid||""} onChange={v=>setForm({...form,paid:v})} type="number"/>
+              <Field label="Parcela" value={form.parcela||""} onChange={v=>setForm({...form,parcela:v})} placeholder="Ex: 1/3"/>
+              <Field label="Vencimento" value={form.venc||""} onChange={v=>setForm({...form,venc:v})} type="date"/>
+              <Field label="Status" value={form.status||""} onChange={v=>setForm({...form,status:v})} options={["Pendente","Pago","Atrasado","Parcial"]} full/>
+            </>:<>
+              <Field label="Fornecedor" value={form.supplier||""} onChange={v=>setForm({...form,supplier:v})} required full/>
+              <Field label="Categoria" value={form.category||""} onChange={v=>setForm({...form,category:v})} options={CATS}/>
+              <Field label="Valor" value={form.value||""} onChange={v=>setForm({...form,value:v})} type="number"/>
+              <Field label="Vencimento" value={form.venc||""} onChange={v=>setForm({...form,venc:v})} type="date"/>
+              <Field label="Evento" value={form.event||""} onChange={v=>setForm({...form,event:v})} options={evNames}/>
+              <Field label="Status" value={form.status||""} onChange={v=>setForm({...form,status:v})} options={["Pendente","Pago"]}/>
+            </>}
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}><Btn variant="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={save}>💾 Salvar</Btn></div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── ORÇAMENTO ─────────────────────────────────────────────────────────────────
+function Orcamento(){
+  const[f,setF]=useState({vendido:"",buffet:"",bebidas:"",equipe:"",decoracao:"",espaco:"",dj:"",foto:"",outros:"",margem:30});
+  const ct=["buffet","bebidas","equipe","decoracao","espaco","dj","foto","outros"].reduce((s,k)=>s+(Number(f[k])||0),0);
+  const lucro=(Number(f.vendido)||0)-ct;const mg=f.vendido>0?(lucro/Number(f.vendido))*100:0;
+  const sg=ct>0?ct/(1-f.margem/100):0;const mc=mg<15?T.red:mg<25?T.yellow:T.green;
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:900,margin:"0 0 5px"}}>Simulador de Orçamento</h1>
+      <p style={{color:T.textSecondary,margin:"0 0 22px",fontSize:13}}>Calcule custo, lucro e margem automaticamente</p>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:15,padding:"20px"}}>
+          <h3 style={{margin:"0 0 14px",fontSize:15,fontWeight:800}}>💰 Valores</h3>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
+            <div style={{gridColumn:"1/-1"}}><label style={{fontSize:11,fontWeight:700,color:T.accent,textTransform:"uppercase"}}>Valor Vendido</label><input type="number" value={f.vendido} onChange={e=>setF({...f,vendido:e.target.value})} placeholder="0" style={{...iStyle,borderColor:T.accent,marginTop:4}}/></div>
+            {["buffet","bebidas","equipe","decoracao","espaco","dj","foto","outros"].map(k=>(
+              <div key={k}><label style={{fontSize:10,fontWeight:700,color:T.textMuted,textTransform:"uppercase"}}>{k}</label><input type="number" value={f[k]} onChange={e=>setF({...f,[k]:e.target.value})} placeholder="0" style={{...iStyle,marginTop:3}}/></div>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:15,padding:"20px"}}>
+            <h3 style={{margin:"0 0 13px",fontSize:15,fontWeight:800}}>📊 Resultado</h3>
+            {[["Custo Total",currency(ct),T.red],["Valor Vendido",currency(Number(f.vendido)||0),T.accent],["Lucro Bruto",currency(lucro),lucro>=0?T.green:T.red]].map(([l,v,c])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:`1px solid ${T.border}`}}><span style={{color:T.textSecondary}}>{l}</span><span style={{fontWeight:800,color:c,fontSize:14}}>{v}</span></div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",paddingTop:12}}><span style={{fontWeight:700}}>Margem</span><span style={{fontWeight:900,fontSize:22,color:mc}}>{mg.toFixed(1)}%</span></div>
+            {f.vendido>0&&<div style={{background:mc+"18",border:`1px solid ${mc}44`,borderRadius:9,padding:"9px 13px",marginTop:11,color:mc,fontSize:13,fontWeight:700}}>{mg<15?"🔴 Margem crítica! Abaixo de 15%.":mg<25?"🟡 Atenção: abaixo de 25%.":"🟢 Ótima margem! Acima de 25%."}</div>}
+          </div>
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:15,padding:"20px"}}>
+            <h3 style={{margin:"0 0 11px",fontSize:15,fontWeight:800}}>🎯 Simulador</h3>
+            <label style={{fontSize:12,fontWeight:700,color:T.textSecondary}}>Margem desejada: <span style={{color:T.accent}}>{f.margem}%</span></label>
+            <input type="range" min={5} max={70} value={f.margem} onChange={e=>setF({...f,margem:Number(e.target.value)})} style={{width:"100%",margin:"9px 0 14px"}}/>
+            <div style={{background:T.surface,borderRadius:11,padding:"13px",textAlign:"center"}}>
+              <div style={{fontSize:11,color:T.textMuted,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Preço mínimo sugerido</div>
+              <div style={{fontSize:24,fontWeight:900,color:T.gold}}>{currency(sg)}</div>
+              <div style={{fontSize:11,color:T.textMuted,marginTop:3}}>Fórmula: Custo ÷ (1 - {f.margem}%)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ROOT ──────────────────────────────────────────────────────────────────────
+function App(){
+  const[session,setSession]=useState(null);
+  const[loading,setLoading]=useState(true);
+  useEffect(()=>{try{const s=sessionStorage.getItem("ep_session");if(s)setSession(JSON.parse(s));}catch{}setLoading(false);},[]);
+  const login=user=>{setSession(user);try{sessionStorage.setItem("ep_session",JSON.stringify(user));}catch{}};
+  const logout=()=>{setSession(null);try{sessionStorage.removeItem("ep_session");}catch{}};
+  if(loading)return<div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",color:T.textSecondary,fontFamily:"'Outfit',sans-serif"}}><div style={{textAlign:"center"}}><div style={{fontSize:44,marginBottom:12}}>🎊</div>Carregando...</div></div>;
+  if(!session)return<LoginScreen onLogin={login}/>;
+  if(session.role==="master")return<AdminPanel onLogout={logout}/>;
+  return<MainSystem user={session} onLogout={logout}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
