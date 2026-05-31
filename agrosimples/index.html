@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>AgroSimples — Gestão Inteligente para Pequenos Produtores</title>
+<meta name="description" content="O sistema que mostra se sua propriedade está dando lucro de verdade. Controle vendas, gastos, tarefas e lucro do jeito simples."/>
+<meta name="theme-color" content="#2e7d32"/>
+<link rel="manifest" href="manifest.webmanifest"/>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+:root{
+  --bg:#f4f7f2; --surface:#ffffff; --card:#ffffff; --ink:#1f2a22; --ink2:#5b6b5f;
+  --line:#e3ebe1; --green:#2e7d32; --green-d:#1b5e20; --green-l:#e8f5e9;
+  --gold:#f59e0b; --red:#e53935; --red-l:#fdecea; --blue:#1976d2; --blue-l:#e3f2fd;
+  --shadow:0 2px 10px rgba(31,42,34,.06); --shadow-l:0 8px 28px rgba(31,42,34,.12);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Nunito',system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh}
+input,select,textarea,button{font-family:inherit;font-size:16px}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#cfd9cd;border-radius:6px}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.fade{animation:fade .25s ease both}
+button{cursor:pointer;border:none;background:none}
+@media print{.no-print{display:none!important}body{background:#fff}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useMemo,useCallback}=React;
+
+/* ════════════ HELPERS ════════════ */
+const brl = v => "R$ " + Number(v||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const today = () => new Date().toISOString().slice(0,10);
+const fmtDate = d => d ? new Date(d+"T00:00").toLocaleDateString("pt-BR") : "—";
+const monthKey = d => (d||today()).slice(0,7);
+const thisMonth = () => today().slice(0,7);
+const id = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const daysUntil = d => Math.ceil((new Date(d+"T00:00") - new Date(today()+"T00:00"))/864e5);
+const onlyDigits = s => (s||"").replace(/\D/g,"");
+
+/* ════════════ STORAGE (offline / localStorage) ════════════ */
+const DB_KEY = "agrosimples_db_v1";
+const blankDB = () => ({
+  property:{ name:"", owner:"", doc:"", address:"", areaTotal:"", type:"" },
+  areas:[], products:[], clients:[], sales:[], expenses:[],
+  payables:[], receivables:[], tasks:[],
+  settings:{ plan:"basico", onboarded:false },
+});
+function loadDB(){
+  try{ const r=localStorage.getItem(DB_KEY); if(r) return {...blankDB(),...JSON.parse(r)}; }catch(e){}
+  return seedDB();
+}
+function saveDB(db){ try{ localStorage.setItem(DB_KEY, JSON.stringify(db)); }catch(e){} }
+
+/* demo seed so the producer sees value immediately */
+function seedDB(){
+  const db = blankDB();
+  db.property = { name:"Sítio Boa Esperança", owner:"José da Silva", doc:"123.456.789-00",
+    address:"Estrada do Campo, km 7 — Zona Rural", areaTotal:"8", type:"Hortaliças e aves" };
+  db.areas = [
+    {id:id(),name:"Talhão 1",kind:"Talhão",size:"3",use:"Milho"},
+    {id:id(),name:"Estufa 1",kind:"Estufa",size:"0.2",use:"Alface"},
+    {id:id(),name:"Galpão 1",kind:"Galpão",size:"0.1",use:"Galinhas poedeiras"},
+  ];
+  db.products = [
+    {id:id(),name:"Alface",unit:"unidade",price:2.5,stock:120,cat:"Hortaliça"},
+    {id:id(),name:"Ovos",unit:"dúzia",price:12,stock:40,cat:"Aves"},
+    {id:id(),name:"Milho verde",unit:"saco",price:35,stock:18,cat:"Grão"},
+  ];
+  const c1=id(),c2=id();
+  db.clients = [
+    {id:c1,name:"Mercado do Bairro",phone:"5599999990001",type:"Mercado",address:"Centro"},
+    {id:c2,name:"Dona Maria (feira)",phone:"5599999990002",type:"Consumidor final",address:"Feira"},
+  ];
+  const m=thisMonth();
+  db.sales = [
+    {id:id(),date:m+"-03",clientId:c1,product:"Alface",qty:60,unit:"unidade",unitPrice:2.5,total:150,pay:"Pix",status:"Pago"},
+    {id:id(),date:m+"-05",clientId:c2,product:"Ovos",qty:10,unit:"dúzia",unitPrice:12,total:120,pay:"Dinheiro",status:"Pago"},
+    {id:id(),date:m+"-12",clientId:c1,product:"Milho verde",qty:8,unit:"saco",unitPrice:35,total:280,pay:"Fiado",status:"Pendente"},
+  ];
+  db.expenses = [
+    {id:id(),date:m+"-02",cat:"Ração",desc:"Ração galinhas",value:180},
+    {id:id(),date:m+"-04",cat:"Sementes",desc:"Mudas de alface",value:60},
+    {id:id(),date:m+"-08",cat:"Combustível",desc:"Diesel",value:120},
+  ];
+  db.receivables = [{id:id(),client:"Mercado do Bairro",value:280,due:m+"-25",status:"Pendente",note:"Milho fiado"}];
+  db.payables = [{id:id(),name:"Conta de energia",value:95,due:m+"-20",status:"Pendente",cat:"Energia"}];
+  db.tasks = [
+    {id:id(),title:"Irrigar a estufa",date:today(),type:"Irrigar",priority:"Alta",status:"Pendente"},
+    {id:id(),title:"Cobrar Mercado do Bairro",date:today(),type:"Cobrar cliente",priority:"Média",status:"Pendente"},
+    {id:id(),title:"Colher alface",date:today(),type:"Colher",priority:"Alta",status:"Pendente"},
+  ];
+  saveDB(db);
+  return db;
+}
+
+/* ════════════ LISTS ════════════ */
+const UNITS=["kg","caixa","saco","unidade","dúzia","litro","maço"];
+const EXP_CATS=["Sementes","Adubos","Defensivos","Ração","Medicamentos","Energia","Água","Combustível","Manutenção","Funcionários","Frete","Embalagens","Impostos","Máquinas","Outros"];
+const PAYS=["Dinheiro","Pix","Cartão","Boleto","Fiado","Transferência","Outro"];
+const SALE_STATUS=["Pago","Pendente","Parcialmente pago","Atrasado","Cancelado"];
+const CLIENT_TYPES=["Consumidor final","Mercado","Restaurante","Feira","Distribuidor","Cooperativa","Outro produtor","Outro"];
+const AREA_KINDS=["Talhão","Pasto","Estufa","Galpão","Curral","Reservatório","Outro"];
+const TASK_TYPES=["Plantar","Irrigar","Adubar","Aplicar defensivo","Capina","Colher","Vacinar","Alimentar animais","Comprar insumos","Manutenção","Entregar pedido","Pagar conta","Cobrar cliente","Registrar venda","Verificar estoque"];
+
+/* ════════════ UI PRIMITIVES ════════════ */
+const Card = ({children,style,onClick}) => (
+  <div onClick={onClick} style={{background:"var(--card)",border:"1px solid var(--line)",borderRadius:16,padding:16,boxShadow:"var(--shadow)",...style}}>{children}</div>
+);
+const Btn = ({children,onClick,kind="primary",style,type="button",small}) => {
+  const k={ primary:{bg:"var(--green)",fg:"#fff"}, ghost:{bg:"var(--green-l)",fg:"var(--green-d)"},
+    danger:{bg:"var(--red-l)",fg:"var(--red)"}, gold:{bg:"#fff7e6",fg:"var(--gold)"} }[kind];
+  return <button type={type} onClick={onClick} style={{background:k.bg,color:k.fg,borderRadius:12,
+    padding:small?"8px 14px":"13px 18px",fontWeight:800,fontSize:small?14:16,display:"inline-flex",
+    alignItems:"center",gap:8,justifyContent:"center",...style}}>{children}</button>;
+};
+const Field = ({label,children,hint}) => (
+  <label style={{display:"block",marginBottom:14}}>
+    <div style={{fontWeight:800,fontSize:14,marginBottom:6,color:"var(--ink)"}}>{label}</div>
+    {children}
+    {hint&&<div style={{fontSize:12,color:"var(--ink2)",marginTop:4}}>{hint}</div>}
+  </label>
+);
+const inputStyle={width:"100%",padding:"13px 14px",borderRadius:12,border:"1.5px solid var(--line)",background:"#fff",color:"var(--ink)",outline:"none"};
+const Input = p => <input {...p} style={{...inputStyle,...p.style}}/>;
+const Select = ({options,...p}) => <select {...p} style={{...inputStyle,...p.style}}>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>;
+const Pill = ({children,color="var(--green)",bg="var(--green-l)"}) => (
+  <span style={{background:bg,color,padding:"3px 11px",borderRadius:20,fontSize:12,fontWeight:800,whiteSpace:"nowrap"}}>{children}</span>
+);
+const Empty = ({icon,text}) => (
+  <div style={{textAlign:"center",padding:"40px 16px",color:"var(--ink2)"}}>
+    <div style={{fontSize:44,marginBottom:8}}>{icon}</div>
+    <div style={{fontWeight:700}}>{text}</div>
+  </div>
+);
+function Modal({title,onClose,children}){
+  return (
+    <div className="no-print" onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(20,30,22,.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:50,padding:0}}>
+      <div className="fade" onClick={e=>e.stopPropagation()} style={{background:"#fff",width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",borderRadius:"22px 22px 0 0",padding:"22px 20px 30px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <h2 style={{fontSize:20,fontWeight:900}}>{title}</h2>
+          <button onClick={onClose} style={{fontSize:26,color:"var(--ink2)",lineHeight:1}}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+const statusColor = s => ({
+  "Pago":["var(--green-d)","var(--green-l)"],"Pendente":["var(--gold)","#fff7e6"],
+  "Atrasado":["var(--red)","var(--red-l)"],"Parcialmente pago":["var(--blue)","var(--blue-l)"],
+  "Cancelado":["var(--ink2)","#eee"],"Concluída":["var(--green-d)","var(--green-l)"],
+  "Em andamento":["var(--blue)","var(--blue-l)"],
+}[s]||["var(--ink2)","#eee"]);
+
+/* ════════════ APP ════════════ */
+function App(){
+  const [db,setDb]=useState(loadDB);
+  const [tab,setTab]=useState("home");
+  const [online,setOnline]=useState(navigator.onLine);
+  useEffect(()=>saveDB(db),[db]);
+  useEffect(()=>{
+    const on=()=>setOnline(true), off=()=>setOnline(false);
+    window.addEventListener("online",on); window.addEventListener("offline",off);
+    return ()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off);};
+  },[]);
+  const set = patch => setDb(d=>({...d,...(typeof patch==="function"?patch(d):patch)}));
+
+  if(!db.settings.onboarded) return <Onboarding db={db} set={set}/>;
+
+  const NAV=[
+    ["home","🏠","Início"],["sales","💰","Vendas"],["expenses","🧾","Gastos"],
+    ["bills","📅","Contas"],["tasks","✅","Tarefas"],["reports","📊","Relatórios"],
+    ["ai","🤖","Assistente"],["more","⚙️","Mais"],
+  ];
+  const VIEWS={
+    home:<Home db={db} set={set} go={setTab}/>, sales:<Sales db={db} set={set}/>,
+    expenses:<Expenses db={db} set={set}/>, bills:<Bills db={db} set={set}/>,
+    tasks:<Tasks db={db} set={set}/>, reports:<Reports db={db}/>,
+    ai:<AI db={db}/>, more:<More db={db} set={set}/>,
+  };
+  return (
+    <div style={{maxWidth:760,margin:"0 auto",paddingBottom:84,minHeight:"100vh"}}>
+      <header className="no-print" style={{position:"sticky",top:0,zIndex:10,background:"var(--green)",color:"#fff",padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:24}}>🌱</span>
+          <div>
+            <div style={{fontWeight:900,fontSize:18,lineHeight:1}}>AgroSimples</div>
+            <div style={{fontSize:11,opacity:.85}}>{db.property.name||"Sua propriedade"}</div>
+          </div>
+        </div>
+        <span style={{fontSize:11,fontWeight:800,background:online?"rgba(255,255,255,.2)":"#e53935",padding:"5px 10px",borderRadius:20}}>
+          {online?"● Online":"○ Offline (salvo no aparelho)"}
+        </span>
+      </header>
+      <main key={tab} className="fade" style={{padding:"16px 14px"}}>{VIEWS[tab]}</main>
+      <nav className="no-print" style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid var(--line)",display:"flex",maxWidth:760,margin:"0 auto",boxShadow:"0 -2px 14px rgba(0,0,0,.05)"}}>
+        {NAV.map(([k,ic,lb])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"8px 0 9px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,color:tab===k?"var(--green)":"var(--ink2)"}}>
+            <span style={{fontSize:21}}>{ic}</span>
+            <span style={{fontSize:10,fontWeight:800}}>{lb}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+/* ════════════ ONBOARDING ════════════ */
+function Onboarding({db,set}){
+  const [f,setF]=useState(db.property);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  return (
+    <div style={{maxWidth:480,margin:"0 auto",padding:"30px 18px"}}>
+      <div style={{textAlign:"center",marginBottom:18}}>
+        <div style={{fontSize:54}}>🌱</div>
+        <h1 style={{fontSize:26,fontWeight:900,color:"var(--green-d)"}}>Bem-vindo ao AgroSimples</h1>
+        <p style={{color:"var(--ink2)",marginTop:6,fontWeight:600}}>O sistema que mostra se sua propriedade está dando lucro de verdade.</p>
+      </div>
+      <Card>
+        <p style={{fontWeight:800,marginBottom:14}}>Vamos começar pelo básico 👇</p>
+        <Field label="Nome da propriedade"><Input value={f.name} onChange={e=>ch("name",e.target.value)} placeholder="Ex.: Sítio Boa Esperança"/></Field>
+        <Field label="Seu nome"><Input value={f.owner} onChange={e=>ch("owner",e.target.value)} placeholder="Ex.: José da Silva"/></Field>
+        <Field label="O que você produz?"><Input value={f.type} onChange={e=>ch("type",e.target.value)} placeholder="Ex.: Hortaliças, ovos, milho"/></Field>
+        <Field label="Tamanho da área (hectares)" hint="Pode preencher depois, sem problema."><Input value={f.areaTotal} onChange={e=>ch("areaTotal",e.target.value)} placeholder="Ex.: 8"/></Field>
+        <Btn style={{width:"100%",marginTop:6}} onClick={()=>set(d=>({property:{...d.property,...f},settings:{...d.settings,onboarded:true}}))}>Começar a usar →</Btn>
+        <button onClick={()=>set(d=>({settings:{...d.settings,onboarded:true}}))} style={{width:"100%",marginTop:10,color:"var(--ink2)",fontWeight:700,fontSize:14}}>Ver com dados de exemplo</button>
+      </Card>
+      <p style={{textAlign:"center",fontSize:12,color:"var(--ink2)",marginTop:14}}>Seus dados ficam salvos no seu aparelho. Funciona sem internet.</p>
+    </div>
+  );
+}
+
+/* ════════════ HOME / DASHBOARD ════════════ */
+function monthAgg(db,mk){
+  const sales=db.sales.filter(s=>monthKey(s.date)===mk && s.status!=="Cancelado");
+  const exp=db.expenses.filter(e=>monthKey(e.date)===mk);
+  const sold=sales.reduce((a,s)=>a+s.total,0);
+  const spent=exp.reduce((a,e)=>a+e.value,0);
+  return {sold,spent,profit:sold-spent,sales,exp};
+}
+function Home({db,set,go}){
+  const mk=thisMonth(); const {sold,spent,profit}=monthAgg(db,mk);
+  const toReceive=db.receivables.filter(r=>r.status!=="Recebido").reduce((a,r)=>a+r.value,0);
+  const toPay=db.payables.filter(p=>p.status!=="Pago").reduce((a,p)=>a+p.value,0);
+  const todayTasks=db.tasks.filter(t=>t.status==="Pendente"&&t.date<=today());
+  const lowStock=db.products.filter(p=>Number(p.stock)<=10);
+  const dueSoon=[...db.payables.filter(p=>p.status!=="Pago"),...db.receivables.filter(r=>r.status!=="Recebido")]
+    .filter(x=>daysUntil(x.due)<=5);
+  return (
+    <div>
+      <h1 style={{fontSize:22,fontWeight:900,marginBottom:4}}>Olá, {db.property.owner?.split(" ")[0]||"produtor"} 👋</h1>
+      <p style={{color:"var(--ink2)",fontWeight:600,marginBottom:16}}>Resumo de {new Date().toLocaleDateString("pt-BR",{month:"long",year:"numeric"})}</p>
+
+      <Card style={{background:profit>=0?"var(--green)":"var(--red)",color:"#fff",border:"none",marginBottom:14}}>
+        <div style={{fontSize:14,fontWeight:700,opacity:.9}}>{profit>=0?"Você está no lucro 🎉":"Atenção: gastou mais do que vendeu"}</div>
+        <div style={{fontSize:34,fontWeight:900,margin:"4px 0"}}>{brl(profit)}</div>
+        <div style={{fontSize:13,opacity:.9}}>Vendeu {brl(sold)} • Gastou {brl(spent)}</div>
+      </Card>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <Card onClick={()=>go("bills")} style={{cursor:"pointer"}}>
+          <div style={{fontSize:13,color:"var(--ink2)",fontWeight:700}}>A receber 💵</div>
+          <div style={{fontSize:22,fontWeight:900,color:"var(--green-d)"}}>{brl(toReceive)}</div>
+        </Card>
+        <Card onClick={()=>go("bills")} style={{cursor:"pointer"}}>
+          <div style={{fontSize:13,color:"var(--ink2)",fontWeight:700}}>A pagar 📌</div>
+          <div style={{fontSize:22,fontWeight:900,color:"var(--red)"}}>{brl(toPay)}</div>
+        </Card>
+      </div>
+
+      <div style={{display:"flex",gap:10,marginBottom:18}}>
+        <Btn kind="primary" style={{flex:1}} onClick={()=>go("sales")}>＋ Venda</Btn>
+        <Btn kind="danger" style={{flex:1}} onClick={()=>go("expenses")}>＋ Gasto</Btn>
+      </div>
+
+      {(dueSoon.length>0||lowStock.length>0)&&(
+        <Card style={{marginBottom:14,borderLeft:"5px solid var(--gold)"}}>
+          <div style={{fontWeight:900,marginBottom:8}}>🔔 Avisos</div>
+          {dueSoon.map(x=>(
+            <div key={x.id} style={{fontSize:14,marginBottom:5}}>📅 <b>{x.name||x.client}</b> — {brl(x.value)} vence {daysUntil(x.due)<0?"atrasado":fmtDate(x.due)}</div>
+          ))}
+          {lowStock.map(p=>(
+            <div key={p.id} style={{fontSize:14,marginBottom:5}}>📦 Estoque baixo: <b>{p.name}</b> ({p.stock} {p.unit})</div>
+          ))}
+        </Card>
+      )}
+
+      <Card>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontWeight:900}}>✅ Tarefas de hoje</div>
+          <button onClick={()=>go("tasks")} style={{color:"var(--green)",fontWeight:800,fontSize:14}}>Ver tudo</button>
+        </div>
+        {todayTasks.length===0 ? <div style={{color:"var(--ink2)",fontWeight:600}}>Nada pendente. Bom trabalho! 👏</div> :
+          todayTasks.slice(0,4).map(t=>(
+            <label key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:"1px solid var(--line)"}}>
+              <input type="checkbox" style={{width:22,height:22,accentColor:"var(--green)"}}
+                onChange={()=>set(d=>({tasks:d.tasks.map(x=>x.id===t.id?{...x,status:"Concluída"}:x)}))}/>
+              <span style={{fontWeight:700}}>{t.title}</span>
+              {t.priority==="Alta"&&<Pill color="var(--red)" bg="var(--red-l)">urgente</Pill>}
+            </label>
+          ))}
+      </Card>
+    </div>
+  );
+}
+
+/* ════════════ VENDAS ════════════ */
+function Sales({db,set}){
+  const [open,setOpen]=useState(false);
+  const blank={date:today(),clientId:db.clients[0]?.id||"",product:"",qty:1,unit:"unidade",unitPrice:0,pay:"Pix",status:"Pago"};
+  const [f,setF]=useState(blank);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  const total=Number(f.qty||0)*Number(f.unitPrice||0);
+  const save=()=>{
+    if(!f.product){alert("Diga o que foi vendido 🙂");return;}
+    const sale={...f,id:id(),qty:Number(f.qty),unitPrice:Number(f.unitPrice),total};
+    set(d=>{
+      const nd={sales:[sale,...d.sales]};
+      // baixa estoque
+      nd.products=d.products.map(p=>p.name===sale.product?{...p,stock:Math.max(0,Number(p.stock)-sale.qty)}:p);
+      // gera conta a receber se fiado/pendente
+      if(sale.status==="Pendente"||sale.pay==="Fiado"){
+        const cl=d.clients.find(c=>c.id===sale.clientId);
+        nd.receivables=[{id:id(),client:cl?.name||"Cliente",value:total,due:sale.date,status:"Pendente",note:sale.product},...d.receivables];
+      }
+      return nd;
+    });
+    setF(blank); setOpen(false);
+  };
+  const clientName=cid=>db.clients.find(c=>c.id===cid)?.name||"—";
+  return (
+    <div>
+      <Header title="Vendas" sub="Registre o que entrou de dinheiro" onAdd={()=>setOpen(true)} addLabel="Nova venda"/>
+      {db.sales.length===0?<Empty icon="💰" text="Nenhuma venda ainda. Toque em + Nova venda."/>:
+        db.sales.map(s=>(
+          <Card key={s.id} style={{marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontWeight:900}}>{s.product} <span style={{color:"var(--ink2)",fontWeight:700}}>· {s.qty} {s.unit}</span></div>
+                <div style={{fontSize:13,color:"var(--ink2)",fontWeight:600}}>{clientName(s.clientId)} • {fmtDate(s.date)} • {s.pay}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontWeight:900,color:"var(--green-d)"}}>{brl(s.total)}</div>
+                <Pill color={statusColor(s.status)[0]} bg={statusColor(s.status)[1]}>{s.status}</Pill>
+              </div>
+            </div>
+          </Card>
+        ))}
+      {open&&(
+        <Modal title="Registrar venda" onClose={()=>setOpen(false)}>
+          <Field label="O que você vendeu?"><Input list="prod" value={f.product} onChange={e=>ch("product",e.target.value)} placeholder="Ex.: Alface"/>
+            <datalist id="prod">{db.products.map(p=><option key={p.id} value={p.name}/>)}</datalist></Field>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}><Field label="Quantidade"><Input type="number" value={f.qty} onChange={e=>ch("qty",e.target.value)}/></Field></div>
+            <div style={{flex:1}}><Field label="Unidade"><Select options={UNITS} value={f.unit} onChange={e=>ch("unit",e.target.value)}/></Field></div>
+          </div>
+          <Field label="Preço por unidade"><Input type="number" value={f.unitPrice} onChange={e=>ch("unitPrice",e.target.value)} placeholder="R$"/></Field>
+          <div style={{background:"var(--green-l)",borderRadius:12,padding:"10px 14px",fontWeight:900,color:"var(--green-d)",marginBottom:14}}>Total: {brl(total)}</div>
+          <Field label="Cliente"><Select options={["",...db.clients.map(c=>c.name)]} value={clientName(f.clientId)} onChange={e=>{const c=db.clients.find(x=>x.name===e.target.value);ch("clientId",c?.id||"");}}/></Field>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}><Field label="Pagamento"><Select options={PAYS} value={f.pay} onChange={e=>ch("pay",e.target.value)}/></Field></div>
+            <div style={{flex:1}}><Field label="Situação"><Select options={SALE_STATUS} value={f.status} onChange={e=>ch("status",e.target.value)}/></Field></div>
+          </div>
+          <Btn style={{width:"100%"}} onClick={save}>Salvar venda</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ════════════ GASTOS ════════════ */
+function Expenses({db,set}){
+  const [open,setOpen]=useState(false);
+  const blank={date:today(),cat:"Sementes",desc:"",value:0};
+  const [f,setF]=useState(blank);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  const save=()=>{
+    if(!f.value||Number(f.value)<=0){alert("Quanto você gastou? 🙂");return;}
+    set(d=>({expenses:[{...f,id:id(),value:Number(f.value)},...d.expenses]}));
+    setF(blank);setOpen(false);
+  };
+  return (
+    <div>
+      <Header title="Gastos do mês" sub="Tudo que saiu de dinheiro" onAdd={()=>setOpen(true)} addLabel="Novo gasto"/>
+      {db.expenses.length===0?<Empty icon="🧾" text="Nenhum gasto registrado."/>:
+        db.expenses.map(e=>(
+          <Card key={e.id} style={{marginBottom:10,display:"flex",justifyContent:"space-between"}}>
+            <div><div style={{fontWeight:900}}>{e.desc||e.cat}</div>
+              <div style={{fontSize:13,color:"var(--ink2)",fontWeight:600}}>{e.cat} • {fmtDate(e.date)}</div></div>
+            <div style={{fontWeight:900,color:"var(--red)"}}>- {brl(e.value)}</div>
+          </Card>
+        ))}
+      {open&&(
+        <Modal title="Registrar gasto" onClose={()=>setOpen(false)}>
+          <Field label="Quanto gastou?"><Input type="number" value={f.value} onChange={e=>ch("value",e.target.value)} placeholder="R$"/></Field>
+          <Field label="Com o quê?"><Select options={EXP_CATS} value={f.cat} onChange={e=>ch("cat",e.target.value)}/></Field>
+          <Field label="Observação (opcional)"><Input value={f.desc} onChange={e=>ch("desc",e.target.value)} placeholder="Ex.: Ração para galinhas"/></Field>
+          <Field label="Data"><Input type="date" value={f.date} onChange={e=>ch("date",e.target.value)}/></Field>
+          <Btn kind="danger" style={{width:"100%"}} onClick={save}>Salvar gasto</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ════════════ CONTAS (pagar/receber) ════════════ */
+function Bills({db,set}){
+  const [t,setT]=useState("receber");
+  const [open,setOpen]=useState(false);
+  const blank={value:0,due:today(),name:"",note:"",cat:"Outros"};
+  const [f,setF]=useState(blank);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  const list = t==="receber"?db.receivables:db.payables;
+  const markPaid=item=>set(d=>t==="receber"
+    ?{receivables:d.receivables.map(x=>x.id===item.id?{...x,status:"Recebido"}:x)}
+    :{payables:d.payables.map(x=>x.id===item.id?{...x,status:"Pago"}:x)});
+  const save=()=>{
+    if(!f.value){alert("Informe o valor 🙂");return;}
+    if(t==="receber") set(d=>({receivables:[{id:id(),client:f.name,value:Number(f.value),due:f.due,status:"Pendente",note:f.note},...d.receivables]}));
+    else set(d=>({payables:[{id:id(),name:f.name,value:Number(f.value),due:f.due,status:"Pendente",cat:f.cat},...d.payables]}));
+    setF(blank);setOpen(false);
+  };
+  return (
+    <div>
+      <h1 style={{fontSize:22,fontWeight:900,marginBottom:12}}>Contas</h1>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        <Tab on={t==="receber"} onClick={()=>setT("receber")}>💵 A receber</Tab>
+        <Tab on={t==="pagar"} onClick={()=>setT("pagar")}>📌 A pagar</Tab>
+      </div>
+      <Btn kind="ghost" small style={{marginBottom:12}} onClick={()=>setOpen(true)}>＋ {t==="receber"?"Quem me deve":"Conta a pagar"}</Btn>
+      {list.length===0?<Empty icon="📅" text="Nada por aqui."/>:
+        list.map(item=>{
+          const paid=item.status==="Recebido"||item.status==="Pago";
+          const late=!paid&&daysUntil(item.due)<0;
+          return (
+            <Card key={item.id} style={{marginBottom:10,borderLeft:`5px solid ${paid?"var(--green)":late?"var(--red)":"var(--gold)"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><div style={{fontWeight:900}}>{item.client||item.name}</div>
+                  <div style={{fontSize:13,color:"var(--ink2)",fontWeight:600}}>{item.note||item.cat} • vence {fmtDate(item.due)} {late&&"⚠️ atrasado"}</div></div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:900,color:t==="receber"?"var(--green-d)":"var(--red)"}}>{brl(item.value)}</div>
+                  {paid?<Pill>✓ {item.status}</Pill>:<Btn small kind="ghost" onClick={()=>markPaid(item)}>Marcar pago</Btn>}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      {open&&(
+        <Modal title={t==="receber"?"Quem está me devendo":"Nova conta a pagar"} onClose={()=>setOpen(false)}>
+          <Field label={t==="receber"?"Nome do cliente":"Nome da conta"}><Input value={f.name} onChange={e=>ch("name",e.target.value)} placeholder={t==="receber"?"Ex.: Mercado do Bairro":"Ex.: Conta de luz"}/></Field>
+          <Field label="Valor"><Input type="number" value={f.value} onChange={e=>ch("value",e.target.value)} placeholder="R$"/></Field>
+          <Field label="Vencimento"><Input type="date" value={f.due} onChange={e=>ch("due",e.target.value)}/></Field>
+          {t==="pagar"&&<Field label="Categoria"><Select options={EXP_CATS} value={f.cat} onChange={e=>ch("cat",e.target.value)}/></Field>}
+          {t==="receber"&&<Field label="Referente a"><Input value={f.note} onChange={e=>ch("note",e.target.value)} placeholder="Ex.: Milho fiado"/></Field>}
+          <Btn style={{width:"100%"}} onClick={save}>Salvar</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+const Tab=({on,onClick,children})=>(
+  <button onClick={onClick} style={{flex:1,padding:"11px 0",borderRadius:12,fontWeight:800,
+    background:on?"var(--green)":"#fff",color:on?"#fff":"var(--ink2)",border:"1px solid var(--line)"}}>{children}</button>
+);
+
+/* ════════════ TAREFAS ════════════ */
+function Tasks({db,set}){
+  const [open,setOpen]=useState(false);
+  const blank={title:"",date:today(),type:"Irrigar",priority:"Média",status:"Pendente"};
+  const [f,setF]=useState(blank);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  const save=()=>{ if(!f.title){alert("Dê um nome à tarefa 🙂");return;}
+    set(d=>({tasks:[{...f,id:id()},...d.tasks]}));setF(blank);setOpen(false);};
+  const toggle=t=>set(d=>({tasks:d.tasks.map(x=>x.id===t.id?{...x,status:x.status==="Concluída"?"Pendente":"Concluída"}:x)}));
+  const sorted=[...db.tasks].sort((a,b)=>(a.status==="Concluída")-(b.status==="Concluída")||a.date.localeCompare(b.date));
+  return (
+    <div>
+      <Header title="Agenda de tarefas" sub="O que precisa fazer na propriedade" onAdd={()=>setOpen(true)} addLabel="Nova tarefa"/>
+      {sorted.length===0?<Empty icon="✅" text="Sem tarefas."/>:
+        sorted.map(t=>{
+          const done=t.status==="Concluída", late=!done&&t.date<today();
+          return (
+            <Card key={t.id} style={{marginBottom:10,display:"flex",alignItems:"center",gap:12,opacity:done?.6:1}}>
+              <input type="checkbox" checked={done} onChange={()=>toggle(t)} style={{width:24,height:24,accentColor:"var(--green)"}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,textDecoration:done?"line-through":"none"}}>{t.title}</div>
+                <div style={{fontSize:13,color:"var(--ink2)",fontWeight:600}}>{t.type} • {fmtDate(t.date)} {late&&"⚠️ atrasada"}</div>
+              </div>
+              {t.priority==="Alta"&&!done&&<Pill color="var(--red)" bg="var(--red-l)">urgente</Pill>}
+            </Card>
+          );
+        })}
+      {open&&(
+        <Modal title="Nova tarefa" onClose={()=>setOpen(false)}>
+          <Field label="O que fazer?"><Input value={f.title} onChange={e=>ch("title",e.target.value)} placeholder="Ex.: Vacinar as galinhas"/></Field>
+          <Field label="Tipo"><Select options={TASK_TYPES} value={f.type} onChange={e=>ch("type",e.target.value)}/></Field>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}><Field label="Quando"><Input type="date" value={f.date} onChange={e=>ch("date",e.target.value)}/></Field></div>
+            <div style={{flex:1}}><Field label="Prioridade"><Select options={["Baixa","Média","Alta"]} value={f.priority} onChange={e=>ch("priority",e.target.value)}/></Field></div>
+          </div>
+          <Btn style={{width:"100%"}} onClick={save}>Salvar tarefa</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ════════════ RELATÓRIOS ════════════ */
+function Reports({db}){
+  const mk=thisMonth(); const {sold,spent,profit,sales,exp}=monthAgg(db,mk);
+  const byProduct=useMemo(()=>{
+    const m={}; sales.forEach(s=>{m[s.product]=(m[s.product]||0)+s.total;});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  },[db]);
+  const byExpCat=useMemo(()=>{
+    const m={}; exp.forEach(e=>{m[e.cat]=(m[e.cat]||0)+e.value;});
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]);
+  },[db]);
+  const margin=sold>0?(profit/sold*100):0;
+  const exportCSV=()=>{
+    const rows=[["Tipo","Data","Descrição","Valor"]];
+    sales.forEach(s=>rows.push(["Venda",s.date,s.product+" ("+(db.clients.find(c=>c.id===s.clientId)?.name||"")+")",s.total]));
+    exp.forEach(e=>rows.push(["Gasto",e.date,e.desc||e.cat,-e.value]));
+    const csv=rows.map(r=>r.join(";")).join("\n");
+    const a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent("﻿"+csv);
+    a.download="agrosimples-"+mk+".csv"; a.click();
+  };
+  const Bar=({label,val,max,color})=>(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:700,marginBottom:3}}><span>{label}</span><span>{brl(val)}</span></div>
+      <div style={{background:"var(--line)",borderRadius:8,height:10}}><div style={{width:(max?val/max*100:0)+"%",background:color,height:10,borderRadius:8}}/></div>
+    </div>
+  );
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <h1 style={{fontSize:22,fontWeight:900}}>Relatórios</h1>
+        <div className="no-print" style={{display:"flex",gap:8}}>
+          <Btn small kind="ghost" onClick={exportCSV}>⬇ Excel/CSV</Btn>
+          <Btn small kind="gold" onClick={()=>window.print()}>🖨 PDF</Btn>
+        </div>
+      </div>
+      <Card style={{marginBottom:14}}>
+        <div style={{fontWeight:900,marginBottom:10}}>Resumo do mês</div>
+        <Row k="Dinheiro que entrou" v={brl(sold)} c="var(--green-d)"/>
+        <Row k="Dinheiro que saiu" v={brl(spent)} c="var(--red)"/>
+        <Row k="Lucro real" v={brl(profit)} c={profit>=0?"var(--green-d)":"var(--red)"} big/>
+        <Row k="Margem de lucro" v={margin.toFixed(0)+"%"} c="var(--ink)"/>
+      </Card>
+      <Card style={{marginBottom:14}}>
+        <div style={{fontWeight:900,marginBottom:12}}>🥇 Produtos que mais venderam</div>
+        {byProduct.length===0?<Empty icon="📊" text="Sem vendas no mês."/>:
+          byProduct.map(([n,v])=><Bar key={n} label={n} val={v} max={byProduct[0][1]} color="var(--green)"/>)}
+      </Card>
+      <Card>
+        <div style={{fontWeight:900,marginBottom:12}}>💸 Maiores gastos</div>
+        {byExpCat.length===0?<Empty icon="📊" text="Sem gastos no mês."/>:
+          byExpCat.map(([n,v])=><Bar key={n} label={n} val={v} max={byExpCat[0][1]} color="var(--gold)"/>)}
+      </Card>
+    </div>
+  );
+}
+const Row=({k,v,c,big})=>(
+  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderTop:"1px solid var(--line)",fontWeight:big?900:700,fontSize:big?18:15}}>
+    <span style={{color:"var(--ink2)"}}>{k}</span><span style={{color:c}}>{v}</span>
+  </div>
+);
+
+/* ════════════ ASSISTENTE IA (local, regras) ════════════ */
+function analyze(db){
+  const mk=thisMonth(); const {sold,spent,profit,sales,exp}=monthAgg(db,mk);
+  const out=[];
+  if(spent>sold) out.push({i:"⚠️",t:`Este mês você gastou ${brl(spent)} e vendeu ${brl(sold)}. Está gastando mais do que vende — atenção!`});
+  else out.push({i:"🎉",t:`Boa! Você teve lucro de ${brl(profit)} este mês (vendeu ${brl(sold)}, gastou ${brl(spent)}).`});
+  const ec={}; exp.forEach(e=>ec[e.cat]=(ec[e.cat]||0)+e.value);
+  const topExp=Object.entries(ec).sort((a,b)=>b[1]-a[1])[0];
+  if(topExp) out.push({i:"💸",t:`Sua maior despesa foi com ${topExp[0]} (${brl(topExp[1])}). Vale ver se dá para economizar aí.`});
+  const pc={}; sales.forEach(s=>pc[s.product]=(pc[s.product]||0)+s.total);
+  const topP=Object.entries(pc).sort((a,b)=>b[1]-a[1])[0];
+  if(topP) out.push({i:"🥇",t:`O produto que mais trouxe dinheiro foi ${topP[0]} (${brl(topP[1])}). Pense em produzir mais dele.`});
+  const late=db.receivables.filter(r=>r.status!=="Recebido"&&daysUntil(r.due)<0);
+  if(late.length) out.push({i:"📞",t:`${late.length} cliente(s) estão atrasados, totalizando ${brl(late.reduce((a,r)=>a+r.value,0))}. Que tal cobrar hoje?`});
+  const low=db.products.filter(p=>Number(p.stock)<=10);
+  if(low.length) out.push({i:"📦",t:`Estoque baixo de: ${low.map(p=>p.name).join(", ")}. Programe a reposição.`});
+  const breakeven=spent;
+  if(sold<breakeven) out.push({i:"🎯",t:`Para cobrir seus custos do mês você ainda precisa vender ${brl(breakeven-sold)}.`});
+  return out;
+}
+function AI({db}){
+  const insights=useMemo(()=>analyze(db),[db]);
+  const mk=thisMonth(); const {sold,spent,profit}=monthAgg(db,mk);
+  const [msgs,setMsgs]=useState([{me:false,t:"Oi! Sou o Assistente AgroSimples. Posso te dizer quanto você lucrou, o que vendeu mais, quem está te devendo e mais. É só perguntar 🙂"}]);
+  const [q,setQ]=useState("");
+  const answer=text=>{
+    const t=text.toLowerCase();
+    if(/lucr|ganh/.test(t)) return `Este mês seu lucro foi de ${brl(profit)} (vendeu ${brl(sold)}, gastou ${brl(spent)}).`;
+    if(/vend|mais/.test(t)){const pc={};db.sales.filter(s=>monthKey(s.date)===mk).forEach(s=>pc[s.product]=(pc[s.product]||0)+s.total);const top=Object.entries(pc).sort((a,b)=>b[1]-a[1])[0];return top?`O que mais vendeu foi ${top[0]} (${brl(top[1])}).`:"Ainda não há vendas neste mês.";}
+    if(/dev|atras|receb|cobr/.test(t)){const l=db.receivables.filter(r=>r.status!=="Recebido");return l.length?`Estão te devendo: ${l.map(r=>`${r.client} (${brl(r.value)})`).join(", ")}.`:"Ninguém está te devendo. 👍";}
+    if(/gast|despe/.test(t)) return `Você gastou ${brl(spent)} este mês.`;
+    if(/colh|semana|tarefa/.test(t)){const ts=db.tasks.filter(x=>x.status==="Pendente");return ts.length?`Tarefas pendentes: ${ts.slice(0,5).map(x=>x.title).join(", ")}.`:"Sem tarefas pendentes.";}
+    if(/pagar|conta/.test(t)){const l=db.payables.filter(p=>p.status!=="Pago");return l.length?`Contas a pagar: ${l.map(p=>`${p.name} (${brl(p.value)})`).join(", ")}.`:"Nenhuma conta a pagar. 👍";}
+    return "Posso responder sobre lucro, vendas, gastos, quem te deve, contas a pagar e tarefas. Tente perguntar 'quanto lucrei?' 🙂";
+  };
+  const send=text=>{const v=(text||q).trim();if(!v)return;setMsgs(m=>[...m,{me:true,t:v},{me:false,t:answer(v)}]);setQ("");};
+  return (
+    <div>
+      <h1 style={{fontSize:22,fontWeight:900,marginBottom:4}}>🤖 Assistente AgroSimples</h1>
+      <p style={{color:"var(--ink2)",fontWeight:600,marginBottom:14}}>Seu consultor rural, em linguagem simples.</p>
+      <Card style={{marginBottom:14}}>
+        <div style={{fontWeight:900,marginBottom:10}}>📋 O que notei na sua propriedade</div>
+        {insights.map((x,i)=>(
+          <div key={i} style={{display:"flex",gap:10,padding:"9px 0",borderTop:i?"1px solid var(--line)":"none"}}>
+            <span style={{fontSize:20}}>{x.i}</span><span style={{fontWeight:600,fontSize:15}}>{x.t}</span>
+          </div>
+        ))}
+      </Card>
+      <Card>
+        <div style={{maxHeight:300,overflowY:"auto",marginBottom:12}}>
+          {msgs.map((m,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:m.me?"flex-end":"flex-start",marginBottom:8}}>
+              <div style={{background:m.me?"var(--green)":"var(--green-l)",color:m.me?"#fff":"var(--ink)",padding:"10px 14px",borderRadius:14,maxWidth:"85%",fontWeight:600,fontSize:15}}>{m.t}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {["Quanto lucrei?","O que vendeu mais?","Quem me deve?","O que tenho pra fazer?"].map(s=>(
+            <button key={s} onClick={()=>send(s)} style={{background:"var(--green-l)",color:"var(--green-d)",border:"none",borderRadius:20,padding:"7px 12px",fontWeight:700,fontSize:13}}>{s}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <Input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Pergunte algo..."/>
+          <Btn onClick={()=>send()}>Enviar</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ════════════ MAIS (propriedade, produtos, clientes, config) ════════════ */
+function More({db,set}){
+  const [view,setView]=useState(null);
+  if(view==="property") return <PropertyForm db={db} set={set} back={()=>setView(null)}/>;
+  if(view==="products") return <SimpleList db={db} set={set} back={()=>setView(null)} title="Produtos" coll="products"
+    blank={{name:"",unit:"unidade",price:0,stock:0,cat:""}} render={p=>({title:p.name,sub:`${p.stock} ${p.unit} em estoque • ${brl(p.price)}`})}
+    fields={[["name","Nome do produto","text"],["unit","Unidade","unit"],["price","Preço de venda","number"],["stock","Estoque atual","number"],["cat","Categoria","text"]]}/>;
+  if(view==="clients") return <SimpleList db={db} set={set} back={()=>setView(null)} title="Clientes" coll="clients"
+    blank={{name:"",phone:"",type:"Consumidor final",address:""}} render={c=>({title:c.name,sub:`${c.type} • ${c.phone||"sem telefone"}`,wa:c.phone})}
+    fields={[["name","Nome","text"],["phone","WhatsApp (só números)","text"],["type","Tipo","clientType"],["address","Endereço","text"]]}/>;
+  if(view==="areas") return <SimpleList db={db} set={set} back={()=>setView(null)} title="Áreas / Talhões" coll="areas"
+    blank={{name:"",kind:"Talhão",size:"",use:""}} render={a=>({title:a.name,sub:`${a.kind} • ${a.size} ha • ${a.use}`})}
+    fields={[["name","Nome da área","text"],["kind","Tipo","areaKind"],["size","Tamanho (ha)","text"],["use","Uso atual","text"]]}/>;
+  const items=[
+    ["🏡","Minha propriedade","property"],["🧺","Produtos","products"],["👥","Clientes","clients"],
+    ["🗺️","Áreas e talhões","areas"],
+  ];
+  const exportJSON=()=>{const a=document.createElement("a");a.href="data:application/json,"+encodeURIComponent(JSON.stringify(db,null,2));a.download="agrosimples-backup.json";a.click();};
+  return (
+    <div>
+      <h1 style={{fontSize:22,fontWeight:900,marginBottom:14}}>Mais opções</h1>
+      {items.map(([ic,lb,v])=>(
+        <Card key={v} onClick={()=>setView(v)} style={{marginBottom:10,display:"flex",alignItems:"center",gap:14,cursor:"pointer"}}>
+          <span style={{fontSize:26}}>{ic}</span><span style={{fontWeight:800,flex:1}}>{lb}</span><span style={{color:"var(--ink2)"}}>›</span>
+        </Card>
+      ))}
+      <Card style={{marginTop:18}}>
+        <div style={{fontWeight:900,marginBottom:8}}>📦 Plano atual</div>
+        <Pill>Plano Básico</Pill>
+        <p style={{fontSize:13,color:"var(--ink2)",marginTop:8,fontWeight:600}}>Você está usando o MVP. Planos pagos liberam plantio, estoque, animais e IA avançada.</p>
+      </Card>
+      <Card style={{marginTop:14}}>
+        <div style={{fontWeight:900,marginBottom:8}}>🔒 Seus dados</div>
+        <Btn kind="ghost" small style={{marginRight:8}} onClick={exportJSON}>⬇ Fazer backup</Btn>
+        <Btn kind="danger" small onClick={()=>{if(confirm("Apagar TODOS os dados e recomeçar?")){localStorage.removeItem(DB_KEY);location.reload();}}}>Apagar tudo</Btn>
+        <p style={{fontSize:12,color:"var(--ink2)",marginTop:10,fontWeight:600}}>Tudo é salvo no seu aparelho e funciona sem internet. Faça backup de vez em quando.</p>
+      </Card>
+    </div>
+  );
+}
+function PropertyForm({db,set,back}){
+  const [f,setF]=useState(db.property);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  return (
+    <div>
+      <BackHeader title="Minha propriedade" back={back}/>
+      <Card>
+        <Field label="Nome da propriedade"><Input value={f.name} onChange={e=>ch("name",e.target.value)}/></Field>
+        <Field label="Seu nome"><Input value={f.owner} onChange={e=>ch("owner",e.target.value)}/></Field>
+        <Field label="CPF ou CNPJ"><Input value={f.doc} onChange={e=>ch("doc",e.target.value)}/></Field>
+        <Field label="Endereço"><Input value={f.address} onChange={e=>ch("address",e.target.value)}/></Field>
+        <Field label="Tamanho total (hectares)"><Input value={f.areaTotal} onChange={e=>ch("areaTotal",e.target.value)}/></Field>
+        <Field label="Tipo de produção"><Input value={f.type} onChange={e=>ch("type",e.target.value)}/></Field>
+        <Btn style={{width:"100%"}} onClick={()=>{set({property:f});back();}}>Salvar</Btn>
+      </Card>
+    </div>
+  );
+}
+function SimpleList({db,set,back,title,coll,blank,fields,render}){
+  const [open,setOpen]=useState(false);
+  const [f,setF]=useState(blank);
+  const ch=(k,v)=>setF(p=>({...p,[k]:v}));
+  const save=()=>{set(d=>({[coll]:[{...f,id:id()},...d[coll]]}));setF(blank);setOpen(false);};
+  const del=i=>set(d=>({[coll]:d[coll].filter(x=>x.id!==i)}));
+  return (
+    <div>
+      <BackHeader title={title} back={back} onAdd={()=>setOpen(true)}/>
+      {db[coll].length===0?<Empty icon="🗂️" text={"Nenhum item em "+title}/>:
+        db[coll].map(item=>{const r=render(item);return(
+          <Card key={item.id} style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><div style={{fontWeight:900}}>{r.title}</div><div style={{fontSize:13,color:"var(--ink2)",fontWeight:600}}>{r.sub}</div></div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {r.wa&&<a href={`https://wa.me/${onlyDigits(r.wa)}`} target="_blank" style={{fontSize:22,textDecoration:"none"}}>💬</a>}
+              <button onClick={()=>del(item.id)} style={{color:"var(--red)",fontSize:20}}>🗑</button>
+            </div>
+          </Card>
+        );})}
+      {open&&(
+        <Modal title={"Adicionar em "+title} onClose={()=>setOpen(false)}>
+          {fields.map(([k,lb,type])=>(
+            <Field key={k} label={lb}>
+              {type==="unit"?<Select options={UNITS} value={f[k]} onChange={e=>ch(k,e.target.value)}/>:
+               type==="clientType"?<Select options={CLIENT_TYPES} value={f[k]} onChange={e=>ch(k,e.target.value)}/>:
+               type==="areaKind"?<Select options={AREA_KINDS} value={f[k]} onChange={e=>ch(k,e.target.value)}/>:
+               <Input type={type} value={f[k]} onChange={e=>ch(k,e.target.value)}/>}
+            </Field>
+          ))}
+          <Btn style={{width:"100%"}} onClick={save}>Salvar</Btn>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ════════════ SHARED HEADERS ════════════ */
+const Header=({title,sub,onAdd,addLabel})=>(
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+    <div><h1 style={{fontSize:22,fontWeight:900}}>{title}</h1>{sub&&<p style={{color:"var(--ink2)",fontWeight:600,fontSize:14}}>{sub}</p>}</div>
+    {onAdd&&<Btn small onClick={onAdd}>＋ {addLabel||"Novo"}</Btn>}
+  </div>
+);
+const BackHeader=({title,back,onAdd})=>(
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+    <button onClick={back} style={{display:"flex",alignItems:"center",gap:6,fontWeight:800,color:"var(--green-d)"}}>‹ Voltar</button>
+    <h1 style={{fontSize:18,fontWeight:900}}>{title}</h1>
+    {onAdd?<Btn small onClick={onAdd}>＋</Btn>:<span style={{width:30}}/>}
+  </div>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+/* service worker (offline) */
+if("serviceWorker" in navigator){ window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{})); }
+</script>
+</body>
+</html>
